@@ -9,7 +9,6 @@ import { logger } from 'hono/logger';
 
 import { env } from './config/env.js';
 import { pingDb } from './db/index.js';
-import itemsRoutes from './modules/items/routes.js';
 import { handleError } from './shared/errors.js';
 import { createApp } from './shared/openapi.js';
 
@@ -41,14 +40,15 @@ app.get('/health', async (c) => {
   );
 });
 
-// 声明 Bearer 认证方式，供 OpenAPI 文档与客户端代码生成使用
+// 声明 Bearer 认证方式，供 OpenAPI 文档与客户端代码生成使用。
+// 当前尚无业务路由使用它，保留是为了让后续新增模块直接引用 security: [{ Bearer: [] }]。
 app.openAPIRegistry.registerComponent('securitySchemes', 'Bearer', {
   type: 'http',
   scheme: 'bearer',
   bearerFormat: 'JWT',
 });
 
-app.route('/v1/items', itemsRoutes);
+// 业务模块尚未开始建设：待物品数据模型确认后，在 modules/ 下新建模块并用 app.route() 挂载。
 
 /**
  * OpenAPI 文档。

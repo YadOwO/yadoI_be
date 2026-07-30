@@ -88,17 +88,16 @@ src/
 ├── types.ts              Hono 环境类型
 ├── config/env.ts         环境变量校验（启动时快速失败）
 ├── db/
-│   ├── schema.ts         Drizzle 表定义（yadoi schema）
+│   ├── schema.ts         Drizzle 表定义（yadoi schema，当前无业务表）
 │   └── index.ts          数据库客户端、连通性探测
-├── middleware/auth.ts    Logto JWT 验签
-├── shared/
-│   ├── errors.ts         统一错误类型与错误响应
-│   └── openapi.ts        OpenAPIHono 工厂（统一校验错误格式）
-└── modules/
-    └── items/            物品模块（routes.ts + schemas.ts）
+├── middleware/auth.ts    Logto JWT 验签（已就绪，等首个业务模块接入）
+└── shared/
+    ├── errors.ts         统一错误类型与错误响应
+    └── openapi.ts        OpenAPIHono 工厂（统一校验错误格式）
 ```
 
-新增业务模块时在 `modules/` 下建目录，在 `app.ts` 用 `app.route()` 挂载。
+业务模块尚未开始建设。新增业务模块时在 `src/modules/` 下建目录（`routes.ts` + `schemas.ts`），
+在 `app.ts` 用 `app.route()` 挂载，并在每个 `createRoute` 的 `middleware` 字段挂 `requireAuth`。
 模块之间不互相引用，将来某模块需独立成服务时可整体搬出。
 
 ## 接口约定
@@ -107,13 +106,12 @@ src/
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/health` | 健康检查（免鉴权） |
+| GET | `/health` | 健康检查（免鉴权），同时探测数据库连通性 |
 | GET | `/openapi.json` | OpenAPI 文档 |
-| GET | `/v1/items` | 物品列表，支持 `limit` `offset` `updatedSince` `includeDeleted` |
-| POST | `/v1/items` | 创建物品，可传入客户端生成的 `id` |
-| GET | `/v1/items/{id}` | 物品详情 |
-| PATCH | `/v1/items/{id}` | 更新物品 |
-| DELETE | `/v1/items/{id}` | 软删除物品 |
+
+业务接口尚未开始建设，脚手架阶段的示例接口已移除。`/openapi.json` 当前 `paths` 为空，
+因为 `/health` 是普通 Hono 路由、不进入 OpenAPI 注册表；等首个业务模块用 `app.openapi()`
+定义路由后，契约内容才会出现。
 
 ### 生成客户端代码
 
@@ -147,7 +145,7 @@ docker run -d --name yadoi-be -p 3000:3000 --env-file .env.production yadoi-be:l
 
 | 项 | 说明 |
 | --- | --- |
-| 物品业务字段 | 当前仅有 `name`。分类、使用状态、购入价格与币种、当前估值、日期、图片等待数据模型确认后补充 |
+| 物品模块 | 表结构与接口都待数据模型确认后再建：分类、使用状态、购入价格与币种、当前估值、日期、图片等 |
 | 图片存储 | 计划走对象存储 + CDN，由本服务签发上传凭证 |
 | PowerSync | 离线优先同步方案，待服务器资源评估后决定是否引入；当前为普通 REST 在线同步 |
 | 分类模块 | 待物品数据模型确认后新增 |
