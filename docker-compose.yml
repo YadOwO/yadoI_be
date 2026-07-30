@@ -1,0 +1,28 @@
+# 本地开发用：只起一个 Postgres。
+# 说明：多个 yado 产品共享同一个 Postgres 实例，各自使用独立 schema
+# （本产品为 yadoi），因此这里的库名是平台级的 yado。
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: yado-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: yado
+      POSTGRES_PASSWORD: yado
+      POSTGRES_DB: yado
+    ports:
+      - '5432:5432'
+    volumes:
+      - ./.data/postgres:/var/lib/postgresql/data
+    command:
+      # 目标部署机内存有限，这里与生产保持一致的保守配置
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - max_connections=50
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U yado -d yado']
+      interval: 10s
+      timeout: 5s
+      retries: 5
