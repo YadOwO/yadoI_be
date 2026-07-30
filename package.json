@@ -4,8 +4,10 @@
   "private": true,
   "description": "芽豆有物（yadoI）业务后端服务",
   "type": "module",
+  "packageManager": "pnpm@10.28.2",
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "pnpm": ">=10"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -32,5 +34,10 @@
     "drizzle-kit": "^0.31.10",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

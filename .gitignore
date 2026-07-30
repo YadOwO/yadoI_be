@@ -8,7 +8,7 @@ dist/
 
 # 日志
 *.log
-npm-debug.log*
+pnpm-debug.log*
 
 # 系统与编辑器
 .DS_Store

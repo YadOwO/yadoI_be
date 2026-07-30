@@ -47,7 +47,7 @@
 
 ```bash
 # 1. 安装依赖
-npm install
+pnpm install
 
 # 2. 准备环境变量
 cp .env.example .env
@@ -56,10 +56,10 @@ cp .env.example .env
 docker compose up -d
 
 # 4. 创建表结构
-npm run db:push
+pnpm run db:push
 
 # 5. 启动开发服务（热重载）
-npm run dev
+pnpm run dev
 ```
 
 服务地址 `http://localhost:3000`，接口文档 `http://localhost:3000/openapi.json`。
@@ -70,14 +70,14 @@ npm run dev
 
 | 命令 | 说明 |
 | --- | --- |
-| `npm run dev` | 开发模式（热重载） |
-| `npm run typecheck` | 类型检查 |
-| `npm run build` | 编译到 `dist/` |
-| `npm start` | 运行编译产物 |
-| `npm run db:push` | 直接把 schema 推送到数据库（开发用） |
-| `npm run db:generate` | 生成迁移文件（生产用） |
-| `npm run db:migrate` | 执行迁移 |
-| `npm run db:studio` | 打开 Drizzle Studio |
+| `pnpm run dev` | 开发模式（热重载） |
+| `pnpm run typecheck` | 类型检查 |
+| `pnpm run build` | 编译到 `dist/` |
+| `pnpm start` | 运行编译产物 |
+| `pnpm run db:push` | 直接把 schema 推送到数据库（开发用） |
+| `pnpm run db:generate` | 生成迁移文件（生产用） |
+| `pnpm run db:migrate` | 执行迁移 |
+| `pnpm run db:studio` | 打开 Drizzle Studio |
 
 ## 目录结构
 

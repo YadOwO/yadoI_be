@@ -3,15 +3,18 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci
+# 启用 corepack 以使用 package.json 中 packageManager 指定的 pnpm 版本
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.json ./
 COPY src ./src
-RUN npm run build
+RUN pnpm run build
 
 # 只保留生产依赖
-RUN npm ci --omit=dev
+RUN pnpm prune --prod
 
 # ---- 运行阶段 ----
 FROM node:22-alpine AS runner
