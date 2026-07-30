@@ -7,7 +7,7 @@ import 'dotenv/config';
 import { z } from 'zod';
 
 const envSchema = z.object({
-  PORT: z.coerce.number().int().positive().default(3000),
+  PORT: z.coerce.number().int().positive().default(7788),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
   /** Postgres 连接串 */

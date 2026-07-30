@@ -2,6 +2,11 @@
 
 芽豆有物（yadoI）业务后端服务。
 
+记录并回看自己拥有些什么——偏收藏与自我审视，不是资产成本核算。客户端为 iOS / Web，
+本服务只提供 REST 接口与 OpenAPI 契约。
+
+工程规则（分层、命名、数据库与接口约定、安全红线）见 [AGENTS.md](./AGENTS.md)。
+
 ## 技术栈
 
 | 层面 | 选型 | 说明 |
@@ -12,36 +17,6 @@
 | ORM | Drizzle | 贴近 SQL，类型推导完整 |
 | 数据库 | PostgreSQL 16 | 本产品独占 `yadoi` schema |
 | 身份 | Logto（自部署） | JWKS 非对称验签，本服务不持有私钥 |
-
-## 架构决策
-
-### 数据库隔离：同实例、独立 schema
-
-多个 yado 产品共享同一个 Postgres 实例，各自独占一个 schema（本产品为 `yadoi`）。
-
-- 不采用"每产品独立数据库实例"：目标部署机内存有限，跑多个 Postgres 不现实。
-- 不采用"所有产品混在一个 schema"：会丧失边界，将来无法拆分。
-- 跨产品读取数据时，**只读对方显式暴露的 view，不直接读对方的表**。view 相当于数据库层的契约，改表不影响下游。
-- 将来某个产品需要独立数据库时，`pg_dump` 该 schema 即可迁出。
-
-### 认证：业务服务自行验签
-
-客户端携带 Logto 签发的 JWT，本服务用 JWKS 公钥验签，取 `sub` 作为 `userId`。
-
-- 所有数据查询强制按 `userId` 过滤，用户只能访问自己的数据。
-- 鉴权中间件绑定在**每个路由定义**的 `middleware` 字段上，不使用 `app.use('/*', ...)`。
-  原因：子应用挂载到 `/v1/items` 后，`'/*'` 只匹配 `/v1/items/xxx` 而**不匹配 `/v1/items` 本身**，
-  会导致列表接口绕过鉴权。这是实际踩过的坑，新增模块时请沿用 `middleware` 写法。
-- `AUTH_DEV_BYPASS=true` 可在本地跳过验签，`NODE_ENV=production` 时该配置被强制忽略。
-
-### 同步友好的数据设计
-
-为将来的多端同步（iOS / Web / Android）预留：
-
-- **稳定唯一 ID**：`id` 为 UUID，允许客户端生成并在创建时传入，支持离线先建后传。
-- **幂等创建**：重复提交同一 id 时返回已存在的记录，而非报错，便于客户端重传。
-- **软删除墓碑**：删除写入 `deletedAt` 而非物理删除，使删除动作能同步到其他端。
-- **增量同步游标**：`updatedAt` 配合 `?updatedSince=&includeDeleted=true` 拉取变更集。
 
 ## 快速开始
 
@@ -55,16 +30,17 @@ cp .env.example .env
 # 3. 启动本地 Postgres
 docker compose up -d
 
-# 4. 创建表结构
-pnpm run db:push
+# 4. 创建表结构（执行迁移）
+pnpm run db:migrate
 
 # 5. 启动开发服务（热重载）
 pnpm run dev
 ```
 
-服务地址 `http://localhost:3000`，接口文档 `http://localhost:3000/openapi.json`。
+服务地址 `http://localhost:7788`，健康检查 `/health`，接口文档 `/openapi.json`。
 
-本地调试可在 `.env` 中设置 `AUTH_DEV_BYPASS=true` 跳过 JWT 校验。
+本地调试可在 `.env` 中设置 `AUTH_DEV_BYPASS=true` 跳过 JWT 校验，此时所有请求都视为
+`AUTH_DEV_USER_ID` 指定的用户。
 
 ## 常用脚本
 
@@ -74,56 +50,10 @@ pnpm run dev
 | `pnpm run typecheck` | 类型检查 |
 | `pnpm run build` | 编译到 `dist/` |
 | `pnpm start` | 运行编译产物 |
-| `pnpm run db:push` | 直接把 schema 推送到数据库（开发用） |
-| `pnpm run db:generate` | 生成迁移文件（生产用） |
-| `pnpm run db:migrate` | 执行迁移 |
+| `pnpm run db:generate` | 表结构变更后生成迁移文件 |
+| `pnpm run db:migrate` | 执行迁移（本地与生产统一走这条） |
+| `pnpm run db:push` | 不要使用：会绕过迁移记录，导致库与迁移历史脱节 |
 | `pnpm run db:studio` | 打开 Drizzle Studio |
-
-## 目录结构
-
-```
-src/
-├── index.ts              启动入口、优雅退出
-├── app.ts                应用组装：中间件、健康检查、路由挂载、OpenAPI 文档
-├── types.ts              Hono 环境类型
-├── config/env.ts         环境变量校验（启动时快速失败）
-├── db/
-│   ├── schema.ts         Drizzle 表定义（yadoi schema，当前无业务表）
-│   └── index.ts          数据库客户端、连通性探测
-├── middleware/auth.ts    Logto JWT 验签（已就绪，等首个业务模块接入）
-└── shared/
-    ├── errors.ts         统一错误类型与错误响应
-    └── openapi.ts        OpenAPIHono 工厂（统一校验错误格式）
-```
-
-业务模块尚未开始建设。新增业务模块时在 `src/modules/` 下建目录（`routes.ts` + `schemas.ts`），
-在 `app.ts` 用 `app.route()` 挂载，并在每个 `createRoute` 的 `middleware` 字段挂 `requireAuth`。
-模块之间不互相引用，将来某模块需独立成服务时可整体搬出。
-
-## 接口约定
-
-响应错误统一为 `{ code, message, details? }`。时间统一 ISO 8601（UTC），ID 统一 UUID。
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/health` | 健康检查（免鉴权），同时探测数据库连通性 |
-| GET | `/openapi.json` | OpenAPI 文档 |
-
-业务接口尚未开始建设，脚手架阶段的示例接口已移除。`/openapi.json` 当前 `paths` 为空，
-因为 `/health` 是普通 Hono 路由、不进入 OpenAPI 注册表；等首个业务模块用 `app.openapi()`
-定义路由后，契约内容才会出现。
-
-### 生成客户端代码
-
-`openapi.json` 是与 iOS / Web 客户端之间的契约，客户端不应手写网络层与数据模型：
-
-```bash
-# 导出契约
-curl -s http://localhost:3000/openapi.json -o openapi.json
-
-# 由契约生成 Swift 客户端（示例，需自行安装 openapi-generator）
-openapi-generator generate -i openapi.json -g swift5 -o ../yadoI/Generated
-```
 
 ## 部署
 
@@ -131,21 +61,8 @@ openapi-generator generate -i openapi.json -g swift5 -o ../yadoI/Generated
 
 ```bash
 docker build -t yadoi-be:latest .
-docker run -d --name yadoi-be -p 3000:3000 --env-file .env.production yadoi-be:latest
+docker run -d --name yadoi-be -p 7788:7788 --env-file .env.production yadoi-be:latest
 ```
 
-生产环境注意事项：
-
-- `NODE_ENV=production`，确保 `AUTH_DEV_BYPASS` 失效。
-- `CORS_ORIGINS` 配置具体域名，不要保留 `*`。
-- 用 `db:generate` + `db:migrate` 管理表结构变更，不要在生产用 `db:push`。
-- `.env` 不提交到仓库，生产配置通过容器环境变量注入。
-
-## 尚未实现
-
-| 项 | 说明 |
-| --- | --- |
-| 物品模块 | 表结构与接口都待数据模型确认后再建：分类、使用状态、购入价格与币种、当前估值、日期、图片等 |
-| 图片存储 | 计划走对象存储 + CDN，由本服务签发上传凭证 |
-| PowerSync | 离线优先同步方案，待服务器资源评估后决定是否引入；当前为普通 REST 在线同步 |
-| 分类模块 | 待物品数据模型确认后新增 |
+生产环境须设 `NODE_ENV=production`（使 `AUTH_DEV_BYPASS` 强制失效），并把 `CORS_ORIGINS`
+改为具体域名而非 `*`。
