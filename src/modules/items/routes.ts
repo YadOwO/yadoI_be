@@ -14,6 +14,7 @@ import { createApp, jsonError } from '../../shared/openapi.js';
 import {
   ItemCreateSchema,
   ItemDeleteResultSchema,
+  ItemIconSchema,
   ItemIdParamSchema,
   ItemListSchema,
   ItemSchema,
@@ -28,11 +29,12 @@ function toItemIcon(row: ItemRow): ItemDTO['icon'] {
     return null;
   }
 
-  if (
-    (row.iconType === 'emoji' || row.iconType === 'preset') &&
-    row.iconValue !== null
-  ) {
-    return { type: row.iconType, value: row.iconValue };
+  const result = ItemIconSchema.safeParse({
+    type: row.iconType,
+    value: row.iconValue,
+  });
+  if (result.success) {
+    return result.data;
   }
 
   throw new Error(`物品 ${row.id} 的图标数据不符合契约`);
@@ -316,6 +318,7 @@ const deleteRoute = createRoute({
       description: '已删除的物品',
       content: { 'application/json': { schema: ItemDeleteResultSchema } },
     },
+    400: jsonError('参数有误'),
     401: jsonError('未通过身份校验'),
     404: jsonError('物品不存在'),
   },

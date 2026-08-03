@@ -28,7 +28,12 @@ const ItemNameSchema = z.string().trim().min(1).max(NAME_MAX_LENGTH);
 const ItemNoteSchema = z.string().max(NOTE_MAX_LENGTH);
 
 /** 金额保留至多两位小数，防止数据库静默四舍五入 */
-const ItemAmountSchema = z.number().min(0).max(AMOUNT_MAX).multipleOf(0.01);
+const ItemAmountSchema = z
+  .number()
+  .min(0)
+  .max(AMOUNT_MAX)
+  .multipleOf(0.01)
+  .openapi({ multipleOf: 0.01 });
 
 /** 严格的日历日期，不包含时刻与时区 */
 const CalendarDateSchema = z.string().date();
@@ -163,7 +168,7 @@ export const ItemUpdateSchema = z
     warrantyUntil: CalendarDateSchema.nullable().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, { message: '至少需要一个待更新字段' })
-  .openapi('ItemUpdate');
+  .openapi('ItemUpdate', { minProperties: 1 });
 
 /** 删除响应：返回软删除后的记录 */
 export const ItemDeleteResultSchema = z
