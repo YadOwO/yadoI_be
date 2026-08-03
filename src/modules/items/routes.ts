@@ -9,12 +9,14 @@ import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { categories, items, type ItemRow } from '../../db/schema.js';
 import { requireAuth } from '../../middleware/auth.js';
-import { badRequest } from '../../shared/errors.js';
+import { badRequest, notFound } from '../../shared/errors.js';
 import { createApp, jsonError } from '../../shared/openapi.js';
 import {
   ItemCreateSchema,
+  ItemIdParamSchema,
   ItemListSchema,
   ItemSchema,
+  ItemUpdateSchema,
   type ItemDTO,
 } from './schemas.js';
 
@@ -81,6 +83,21 @@ async function assertOwnedCategory(userId: string, categoryId: string): Promise<
   if (rows[0] === undefined) {
     throw badRequest('分类不存在或已删除');
   }
+}
+
+/** 按 ID 读取当前用户的物品，不存在则抛 404 */
+async function findOwnedItem(userId: string, id: string): Promise<ItemRow> {
+  const rows = await db
+    .select()
+    .from(items)
+    .where(and(eq(items.id, id), eq(items.userId, userId)))
+    .limit(1);
+
+  const row = rows[0];
+  if (row === undefined) {
+    throw notFound('物品不存在');
+  }
+  return row;
 }
 
 const app = createApp();
@@ -190,6 +207,96 @@ app.openapi(createItemRoute, async (c) => {
     throw badRequest('该物品已删除');
   }
   return c.json(toItemDTO(owned), 201);
+});
+
+const updateRoute = createRoute({
+  method: 'patch',
+  path: '/{id}',
+  tags: ['items'],
+  summary: '更新物品',
+  description: '只更新请求中出现的字段；可空字段传 null 表示清空。',
+  middleware: [requireAuth] as const,
+  security: [{ Bearer: [] }],
+  request: {
+    params: ItemIdParamSchema,
+    body: {
+      required: true,
+      content: { 'application/json': { schema: ItemUpdateSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: '更新后的物品',
+      content: { 'application/json': { schema: ItemSchema } },
+    },
+    400: jsonError('参数有误、分类无效或物品已删除'),
+    401: jsonError('未通过身份校验'),
+    404: jsonError('物品不存在'),
+  },
+});
+
+app.openapi(updateRoute, async (c) => {
+  const userId = c.get('userId');
+  const { id } = c.req.valid('param');
+  const body = c.req.valid('json');
+
+  const current = await findOwnedItem(userId, id);
+  if (current.deletedAt !== null) {
+    throw badRequest('该物品已删除，无法修改');
+  }
+
+  if (body.categoryId !== undefined && body.categoryId !== null) {
+    await assertOwnedCategory(userId, body.categoryId);
+  }
+
+  const patch: Partial<ItemRow> = {};
+  if (body.name !== undefined) {
+    patch.name = body.name;
+  }
+  if (body.categoryId !== undefined) {
+    patch.categoryId = body.categoryId;
+  }
+  if (body.icon !== undefined) {
+    patch.iconType = body.icon?.type ?? null;
+    patch.iconValue = body.icon?.value ?? null;
+  }
+  if (body.status !== undefined) {
+    patch.status = body.status;
+  }
+  if (body.isFavorite !== undefined) {
+    patch.isFavorite = body.isFavorite;
+  }
+  if (body.note !== undefined) {
+    patch.note = body.note;
+  }
+  if (body.purchasePrice !== undefined) {
+    patch.purchasePrice = body.purchasePrice;
+  }
+  if (body.salePrice !== undefined) {
+    patch.salePrice = body.salePrice;
+  }
+  if (body.purchasedAt !== undefined) {
+    patch.purchasedAt = body.purchasedAt;
+  }
+  if (body.soldAt !== undefined) {
+    patch.soldAt = body.soldAt;
+  }
+  if (body.warrantyUntil !== undefined) {
+    patch.warrantyUntil = body.warrantyUntil;
+  }
+
+  const updated = await db
+    .update(items)
+    .set(patch)
+    // 未删除判断必须下推到 where，避免前置检查后发生并发删除时改到墓碑行
+    .where(and(eq(items.id, id), eq(items.userId, userId), isNull(items.deletedAt)))
+    .returning();
+
+  const row = updated[0];
+  if (row === undefined) {
+    throw badRequest('该物品已删除，无法修改');
+  }
+  return c.json(toItemDTO(row), 200);
 });
 
 export default app;
