@@ -19,7 +19,7 @@ const ICON_VALUE_MAX_LENGTH = 256;
 const AMOUNT_MAX = 9_999_999_999.99;
 
 /** 物品生命周期状态 */
-const ItemStatusSchema = z.enum(['in_service', 'retired', 'sold']);
+export const ItemStatusSchema = z.enum(['in_service', 'retired', 'sold']);
 
 /** 物品名称 */
 const ItemNameSchema = z.string().trim().min(1).max(NAME_MAX_LENGTH);

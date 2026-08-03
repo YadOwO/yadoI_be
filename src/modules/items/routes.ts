@@ -17,6 +17,7 @@ import {
   ItemIdParamSchema,
   ItemListSchema,
   ItemSchema,
+  ItemStatusSchema,
   ItemUpdateSchema,
   type ItemDTO,
 } from './schemas.js';
@@ -39,8 +40,9 @@ function toItemIcon(row: ItemRow): ItemDTO['icon'] {
 
 /** 把数据库状态收窄为接口契约允许的取值 */
 function toItemStatus(row: ItemRow): ItemDTO['status'] {
-  if (row.status === 'in_service' || row.status === 'retired' || row.status === 'sold') {
-    return row.status;
+  const result = ItemStatusSchema.safeParse(row.status);
+  if (result.success) {
+    return result.data;
   }
 
   throw new Error(`物品 ${row.id} 的状态不符合契约`);
