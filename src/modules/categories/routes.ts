@@ -3,14 +3,14 @@
  *
  * 所有查询都强制按当前用户过滤，删除一律采用软删除。
  */
-import { createRoute, z } from '@hono/zod-openapi';
+import { createRoute } from '@hono/zod-openapi';
 import { and, asc, eq, isNull, max, sql } from 'drizzle-orm';
 
 import { db } from '../../db/index.js';
 import { categories, items, type CategoryRow } from '../../db/schema.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { badRequest, notFound } from '../../shared/errors.js';
-import { createApp } from '../../shared/openapi.js';
+import { createApp, jsonError } from '../../shared/openapi.js';
 import {
   CategoryCreateSchema,
   CategoryDeleteResultSchema,
@@ -21,20 +21,6 @@ import {
   SORT_ORDER_MAX,
   type CategoryDTO,
 } from './schemas.js';
-
-/** 错误响应的 OpenAPI 定义 */
-const ErrorSchema = z
-  .object({
-    code: z.string(),
-    message: z.string(),
-    details: z.unknown().optional(),
-  })
-  .openapi('Error');
-
-const jsonError = (description: string) => ({
-  description,
-  content: { 'application/json': { schema: ErrorSchema } },
-});
 
 /** Postgres 唯一约束冲突的错误码 */
 const PG_UNIQUE_VIOLATION = '23505';
