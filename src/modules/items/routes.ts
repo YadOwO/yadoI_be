@@ -4,7 +4,7 @@
  * 所有查询都强制按当前用户过滤，删除一律采用软删除。
  */
 import { createRoute } from '@hono/zod-openapi';
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 
 import { db } from '../../db/index.js';
 import { categories, items, type ItemRow } from '../../db/schema.js';
@@ -13,6 +13,7 @@ import { badRequest, notFound } from '../../shared/errors.js';
 import { createApp, jsonError } from '../../shared/openapi.js';
 import {
   ItemCreateSchema,
+  ItemDeleteResultSchema,
   ItemIdParamSchema,
   ItemListSchema,
   ItemSchema,
@@ -297,6 +298,46 @@ app.openapi(updateRoute, async (c) => {
     throw badRequest('该物品已删除，无法修改');
   }
   return c.json(toItemDTO(row), 200);
+});
+
+const deleteRoute = createRoute({
+  method: 'delete',
+  path: '/{id}',
+  tags: ['items'],
+  summary: '删除物品',
+  description: '软删除物品；重复删除同一物品时幂等返回首次删除后的记录。',
+  middleware: [requireAuth] as const,
+  security: [{ Bearer: [] }],
+  request: { params: ItemIdParamSchema },
+  responses: {
+    200: {
+      description: '已删除的物品',
+      content: { 'application/json': { schema: ItemDeleteResultSchema } },
+    },
+    401: jsonError('未通过身份校验'),
+    404: jsonError('物品不存在'),
+  },
+});
+
+app.openapi(deleteRoute, async (c) => {
+  const userId = c.get('userId');
+  const { id } = c.req.valid('param');
+
+  const current = await findOwnedItem(userId, id);
+  if (current.deletedAt !== null) {
+    return c.json({ item: toItemDTO(current) }, 200);
+  }
+
+  // 目前没有表引用 items，因此无需事务清理关联数据；将来新增引用时必须同步补齐。
+  const deleted = await db
+    .update(items)
+    .set({ deletedAt: sql`now()` })
+    .where(and(eq(items.id, id), eq(items.userId, userId), isNull(items.deletedAt)))
+    .returning();
+
+  // 并发删除可能使本次 update 无返回；重新读取即可幂等返回先完成的删除结果。
+  const row = deleted[0] ?? (await findOwnedItem(userId, id));
+  return c.json({ item: toItemDTO(row) }, 200);
 });
 
 export default app;
