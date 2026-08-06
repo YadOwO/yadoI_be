@@ -1,0 +1,72 @@
+name: 部署后端到生产环境
+
+# 只有合并到 main 才部署。dev 上的日常提交不触发，
+# 这样 main 代表「已确认要上线的状态」。
+on:
+  push:
+    branches: [main]
+  # 允许在 Actions 页面手动触发：用于重试失败的部署，或不改代码重新部署当前 main
+  workflow_dispatch:
+
+# 同一时刻只允许一个部署运行，避免两次部署交错导致容器状态混乱。
+# 不取消进行中的部署 —— 中途打断可能留下半完成状态。
+concurrency:
+  group: deploy-yadoi-be
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # 推送镜像到 GHCR 所需
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 准备 buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # GITHUB_TOKEN 由 Actions 自动注入，无需手工配置
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 服务器是 amd64，本机开发是 arm64 Mac，所以必须显式指定平台。
+      # 镜像名必须全小写 —— GHCR 不接受大写，因此不能直接用 ${{ github.repository }}
+      # （其值为 YadOwO/yadoI_be）。
+      # 类型检查由 Dockerfile 中的 pnpm build（即 tsc）承担，构建失败即等于类型不过，
+      # 无需再单独跑一次 typecheck。
+      - name: 构建并推送镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/yadowo/yadoi_be:latest
+            ghcr.io/yadowo/yadoi_be:${{ github.sha }}
+          # 复用 Actions 缓存，依赖层未变时可省去重装 node_modules 的时间
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 服务器上那把公钥在 authorized_keys 里被 forced command 限制为
+      # 只能执行 /opt/yado/scripts/deploy-yadoi-be.sh，因此这里传什么命令都会被忽略，
+      # 写 true 仅作占位。部署脚本的输出与退出码会原样返回，失败时本步骤即失败。
+      - name: 触发服务器部署
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          # 地址与主机公钥都不是秘密（IP 可从 DNS 查到），写在此处便于换机器时一处修改。
+          DEPLOY_HOST: 8.163.21.152
+          DEPLOY_HOST_KEY: 8.163.21.152 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDKbBzF0ynrtwRHKNsekYVMLHNnT7yTiNZpyaig0WzP6
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # 固定主机公钥而非用 StrictHostKeyChecking=no，避免中间人攻击
+          echo "$DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key "yado@$DEPLOY_HOST" true
