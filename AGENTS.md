@@ -64,6 +64,19 @@ middleware/                 请求级横切逻辑
 - 模块之间不互相 import，需要复用的逻辑下沉到 `shared/`。
 - 数据契约只在 `schemas.ts` 定义一次，不在别处重复声明形状。
 
+## 接口约定
+
+- 错误响应统一为 `{ code, message, details? }`，由 `shared/errors.ts` 的 `AppError` 与全局
+  `onError` 产出，不要在路由里手写错误结构。
+- 时刻字段对外输出 ISO 8601（UTC），日历日期输出 `YYYY-MM-DD`，ID 统一 UUID。
+- 创建接口保持幂等：允许客户端生成并传入 `id`（支持离线先建后传），重复提交同一 id 时返回
+  已存在的记录而非报错，便于客户端安全重传。
+- 列表接口一次返回全量数据，不做增量同步。个人物品量级（几百到几千条）下全量拉取足够，
+  客户端整体替换本地数据即可；游标式增量同步的复杂度（安全窗口、墓碑下发、冲突解决）
+  与收益不成比例，真需要离线优先时改用 PowerSync 而非自建。
+- `openapi.json` 是与 iOS / Web 客户端之间的契约，客户端网络层与数据模型由它生成，不手写。
+  因此新增路由必须用 `app.openapi()` 定义，不要用裸 `app.get()`，否则不会进入契约。
+
 ## 安全红线
 
 - 所有涉及用户数据的查询**必须**按 `userId` 过滤，不得依赖客户端传入的用户标识。
@@ -77,13 +90,23 @@ middleware/                 请求级横切逻辑
 
 - 本产品所有表位于 `yadoi` schema 下，通过 `yadoiSchema.table()` 定义。
 - 跨产品读取数据只读对方暴露的 view，禁止直接读其他 schema 的表。
-- 删除采用软删除（写 `deletedAt`），禁止物理删除业务数据。
-- 每张业务表都应具备 `id`(uuid) / `user_id` / `created_at` / `updated_at` / `deleted_at`，
-  以满足多端增量同步的需要。
-- 生产环境表结构变更走 `db:generate` + `db:migrate`，不要用 `db:push`。
+- 删除采用软删除（写 `deletedAt`），禁止物理删除业务数据。软删除的作用是防误删与保留审计线索，
+  列表接口不下发已删除记录。
+- 每张业务表都应具备 `id`(uuid) / `user_id` / `created_at` / `updated_at` / `deleted_at`。
+- 表结构变更走 `db:generate` + `db:migrate`，本地与生产一致，**不要用 `db:push`**：
+  push 不写迁移记录，会让库的实际结构与迁移历史脱节，之后 generate 算出的差异是错的。
+  `drizzle/` 下的 SQL 与 meta 必须提交，它们是表结构的版本历史。
+- 枚举列存 `text` 而非 pg enum（值集合仍在演进，pg enum 每次调整都要 `ALTER TYPE` 且值删不掉），
+  合法值由模块 `schemas.ts` 的 Zod 把关。
+- 枚举值一律用 snake_case 字符串，**禁止数字码**：数字码在中间插入新值时会让历史数据含义静默
+  漂移，且数据库、日志、JSON 里都需要额外查表才能读懂。
+- 日历日期用 `date`，事件时刻用 `timestamptz`。入手日期这类日历日期若用 timestamptz，
+  会因时区换算显示成前一天。
+- 可由其他字段推导的信息不落库。例如「是否在保」由 `warranty_until` 与当天比较得出，
+  不存成状态值——状态值会随时间自动失效而无人逐条修正。
 
 ## 改动前后
 
-- 改动运行时行为后，至少执行 `npm run typecheck` 与 `npm run build`。
+- 改动运行时行为后，至少执行 `pnpm run typecheck` 与 `pnpm run build`。
 - 新增或修改接口后，实际启动服务验证，不要只依据类型检查就宣称完成。
 - 输出完整可运行代码，不要留 `// ...` 之类的省略片段；确实无法实现的占位需显著标注并在回复中说明。

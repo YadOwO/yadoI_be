@@ -1,113 +1,161 @@
 /**
  * 物品模块路由。
  *
- * 所有查询都强制按 userId 过滤，保证用户只能访问自己的数据。
- * 删除采用软删除（写入 deletedAt），使删除动作能够同步到其他端。
+ * 所有查询都强制按当前用户过滤，删除一律采用软删除。
  */
 import { createRoute } from '@hono/zod-openapi';
-import { and, desc, eq, gt, isNull, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 
 import { db } from '../../db/index.js';
-import { items as itemsTable, type ItemRow } from '../../db/schema.js';
+import { categories, items, type ItemRow } from '../../db/schema.js';
 import { requireAuth } from '../../middleware/auth.js';
-import { AppError, ErrorCode, badRequest, notFound } from '../../shared/errors.js';
-import { createApp } from '../../shared/openapi.js';
+import { badRequest, notFound } from '../../shared/errors.js';
+import { createApp, jsonError } from '../../shared/openapi.js';
 import {
-  CreateItemSchema,
-  DeleteItemResponseSchema,
-  ErrorSchema,
+  ItemCreateSchema,
+  ItemDeleteResultSchema,
+  ItemIconSchema,
   ItemIdParamSchema,
+  ItemListSchema,
   ItemSchema,
-  ListItemsQuerySchema,
-  ListItemsResponseSchema,
-  UpdateItemSchema,
+  ItemStatusSchema,
+  ItemUpdateSchema,
+  type ItemDTO,
 } from './schemas.js';
 
-/** 数据库行转为对外 DTO：时间统一输出 ISO 8601 */
-function toItemDTO(row: ItemRow) {
+/** 把数据库图标列转换为对外的嵌套图标结构 */
+function toItemIcon(row: ItemRow): ItemDTO['icon'] {
+  if (row.iconType === null && row.iconValue === null) {
+    return null;
+  }
+
+  const result = ItemIconSchema.safeParse({
+    type: row.iconType,
+    value: row.iconValue,
+  });
+  if (result.success) {
+    return result.data;
+  }
+
+  throw new Error(`物品 ${row.id} 的图标数据不符合契约`);
+}
+
+/** 把数据库状态收窄为接口契约允许的取值 */
+function toItemStatus(row: ItemRow): ItemDTO['status'] {
+  const result = ItemStatusSchema.safeParse(row.status);
+  if (result.success) {
+    return result.data;
+  }
+
+  throw new Error(`物品 ${row.id} 的状态不符合契约`);
+}
+
+/** 把数据库行转换为对外物品结构 */
+function toItemDTO(row: ItemRow): ItemDTO {
   return {
     id: row.id,
     name: row.name,
+    categoryId: row.categoryId,
+    icon: toItemIcon(row),
+    status: toItemStatus(row),
+    isFavorite: row.isFavorite,
+    note: row.note,
+    purchasePrice: row.purchasePrice,
+    salePrice: row.salePrice,
+    purchasedAt: row.purchasedAt,
+    soldAt: row.soldAt,
+    warrantyUntil: row.warrantyUntil,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     deletedAt: row.deletedAt === null ? null : row.deletedAt.toISOString(),
   };
 }
 
-const jsonError = (description: string) => ({
-  description,
-  content: { 'application/json': { schema: ErrorSchema } },
-});
+/** 确认分类属于当前用户且尚未删除 */
+async function assertOwnedCategory(userId: string, categoryId: string): Promise<void> {
+  const rows = await db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(
+      and(
+        eq(categories.id, categoryId),
+        eq(categories.userId, userId),
+        isNull(categories.deletedAt),
+      ),
+    )
+    .limit(1);
+
+  if (rows[0] === undefined) {
+    throw badRequest('分类不存在或已删除');
+  }
+}
+
+/** 按 ID 读取当前用户的物品，不存在则抛 404 */
+async function findOwnedItem(userId: string, id: string): Promise<ItemRow> {
+  const rows = await db
+    .select()
+    .from(items)
+    .where(and(eq(items.id, id), eq(items.userId, userId)))
+    .limit(1);
+
+  const row = rows[0];
+  if (row === undefined) {
+    throw notFound('物品不存在');
+  }
+  return row;
+}
 
 const app = createApp();
-
-// 鉴权中间件绑定在每个路由定义上（见各 createRoute 的 middleware 字段）。
-// 不使用 app.use('/*', ...) 挂载：子应用挂载到 /v1/items 后，'/*' 只匹配
-// /v1/items/xxx 而不匹配 /v1/items 本身，会导致列表接口绕过鉴权。
-
-/* ------------------------------- 查询列表 ------------------------------- */
 
 const listRoute = createRoute({
   method: 'get',
   path: '/',
-  tags: ['Items'],
-  summary: '查询物品列表',
-  description:
-    '按更新时间倒序返回当前用户的物品。增量同步时传 updatedSince 并将 includeDeleted 设为 true，以便同步删除动作。',
+  tags: ['items'],
+  summary: '物品列表',
+  description: '返回当前用户所有未删除的物品，按最后更新时间倒序排列。',
   middleware: [requireAuth] as const,
   security: [{ Bearer: [] }],
-  request: { query: ListItemsQuerySchema },
   responses: {
     200: {
-      description: '查询成功',
-      content: { 'application/json': { schema: ListItemsResponseSchema } },
+      description: '物品列表',
+      content: { 'application/json': { schema: ItemListSchema } },
     },
-    400: jsonError('参数错误'),
     401: jsonError('未通过身份校验'),
   },
 });
 
 app.openapi(listRoute, async (c) => {
   const userId = c.get('userId');
-  const { limit, offset, updatedSince, includeDeleted } = c.req.valid('query');
-
-  const conditions: SQL[] = [eq(itemsTable.userId, userId)];
-  if (!includeDeleted) {
-    const notDeleted = isNull(itemsTable.deletedAt);
-    conditions.push(notDeleted);
-  }
-  if (updatedSince !== undefined) {
-    conditions.push(gt(itemsTable.updatedAt, new Date(updatedSince)));
-  }
 
   const rows = await db
     .select()
-    .from(itemsTable)
-    .where(and(...conditions))
-    .orderBy(desc(itemsTable.updatedAt))
-    .limit(limit)
-    .offset(offset);
+    .from(items)
+    .where(and(eq(items.userId, userId), isNull(items.deletedAt)))
+    .orderBy(desc(items.updatedAt), asc(items.id));
 
   return c.json({ items: rows.map(toItemDTO) }, 200);
 });
 
-/* ------------------------------- 创建物品 ------------------------------- */
-
 const createItemRoute = createRoute({
   method: 'post',
   path: '/',
-  tags: ['Items'],
-  summary: '创建物品',
-  description:
-    '客户端可自行生成并传入 id（UUID v4）以支持离线创建；重复提交同一 id 时幂等返回已存在的记录。',
+  tags: ['items'],
+  summary: '新建物品',
+  description: '允许客户端传入自行生成的 id；重复提交同一 id 时幂等返回已有记录。',
   middleware: [requireAuth] as const,
   security: [{ Bearer: [] }],
   request: {
-    body: { content: { 'application/json': { schema: CreateItemSchema } }, required: true },
+    body: {
+      required: true,
+      content: { 'application/json': { schema: ItemCreateSchema } },
+    },
   },
   responses: {
-    201: { description: '创建成功', content: { 'application/json': { schema: ItemSchema } } },
-    400: jsonError('参数错误'),
+    201: {
+      description: '创建成功（或幂等返回已存在的记录）',
+      content: { 'application/json': { schema: ItemSchema } },
+    },
+    400: jsonError('参数有误、分类无效或 id 已被占用'),
     401: jsonError('未通过身份校验'),
   },
 });
@@ -116,10 +164,29 @@ app.openapi(createItemRoute, async (c) => {
   const userId = c.get('userId');
   const body = c.req.valid('json');
 
+  if (body.categoryId !== undefined && body.categoryId !== null) {
+    await assertOwnedCategory(userId, body.categoryId);
+  }
+
   const inserted = await db
-    .insert(itemsTable)
-    .values({ id: body.id, userId, name: body.name })
-    .onConflictDoNothing({ target: itemsTable.id })
+    .insert(items)
+    .values({
+      ...(body.id === undefined ? {} : { id: body.id }),
+      userId,
+      name: body.name,
+      categoryId: body.categoryId ?? null,
+      iconType: body.icon?.type ?? null,
+      iconValue: body.icon?.value ?? null,
+      status: body.status ?? 'in_service',
+      isFavorite: body.isFavorite ?? false,
+      note: body.note ?? null,
+      purchasePrice: body.purchasePrice ?? null,
+      salePrice: body.salePrice ?? null,
+      purchasedAt: body.purchasedAt ?? null,
+      soldAt: body.soldAt ?? null,
+      warrantyUntil: body.warrantyUntil ?? null,
+    })
+    .onConflictDoNothing({ target: items.id })
     .returning();
 
   const row = inserted[0];
@@ -127,151 +194,155 @@ app.openapi(createItemRoute, async (c) => {
     return c.json(toItemDTO(row), 201);
   }
 
-  // 走到这里说明 id 已存在：若属于当前用户则幂等返回，否则视为非法请求
-  const providedId = body.id;
-  if (providedId === undefined) {
-    throw new AppError(500, ErrorCode.Internal, '创建物品失败');
+  if (body.id === undefined) {
+    throw badRequest('创建物品失败，请重试');
   }
 
   const existing = await db
     .select()
-    .from(itemsTable)
-    .where(and(eq(itemsTable.id, providedId), eq(itemsTable.userId, userId)))
+    .from(items)
+    .where(and(eq(items.id, body.id), eq(items.userId, userId)))
     .limit(1);
 
-  const existingRow = existing[0];
-  if (existingRow === undefined) {
+  const owned = existing[0];
+  if (owned === undefined) {
     throw badRequest('该物品 ID 已被占用');
   }
-  return c.json(toItemDTO(existingRow), 201);
-});
-
-/* ------------------------------- 查询详情 ------------------------------- */
-
-const getItemRoute = createRoute({
-  method: 'get',
-  path: '/{id}',
-  tags: ['Items'],
-  summary: '查询物品详情',
-  middleware: [requireAuth] as const,
-  security: [{ Bearer: [] }],
-  request: { params: ItemIdParamSchema },
-  responses: {
-    200: { description: '查询成功', content: { 'application/json': { schema: ItemSchema } } },
-    401: jsonError('未通过身份校验'),
-    404: jsonError('物品不存在'),
-  },
-});
-
-app.openapi(getItemRoute, async (c) => {
-  const userId = c.get('userId');
-  const { id } = c.req.valid('param');
-
-  const rows = await db
-    .select()
-    .from(itemsTable)
-    .where(and(eq(itemsTable.id, id), eq(itemsTable.userId, userId), isNull(itemsTable.deletedAt)))
-    .limit(1);
-
-  const row = rows[0];
-  if (row === undefined) {
-    throw notFound('物品不存在');
+  if (owned.deletedAt !== null) {
+    throw badRequest('该物品已删除');
   }
-  return c.json(toItemDTO(row), 200);
+  return c.json(toItemDTO(owned), 201);
 });
 
-/* ------------------------------- 更新物品 ------------------------------- */
-
-const updateItemRoute = createRoute({
+const updateRoute = createRoute({
   method: 'patch',
   path: '/{id}',
-  tags: ['Items'],
+  tags: ['items'],
   summary: '更新物品',
+  description: '只更新请求中出现的字段；可空字段传 null 表示清空。',
   middleware: [requireAuth] as const,
   security: [{ Bearer: [] }],
   request: {
     params: ItemIdParamSchema,
-    body: { content: { 'application/json': { schema: UpdateItemSchema } }, required: true },
+    body: {
+      required: true,
+      content: { 'application/json': { schema: ItemUpdateSchema } },
+    },
   },
   responses: {
-    200: { description: '更新成功', content: { 'application/json': { schema: ItemSchema } } },
-    400: jsonError('参数错误'),
+    200: {
+      description: '更新后的物品',
+      content: { 'application/json': { schema: ItemSchema } },
+    },
+    400: jsonError('参数有误、分类无效或物品已删除'),
     401: jsonError('未通过身份校验'),
     404: jsonError('物品不存在'),
   },
 });
 
-app.openapi(updateItemRoute, async (c) => {
+app.openapi(updateRoute, async (c) => {
   const userId = c.get('userId');
   const { id } = c.req.valid('param');
   const body = c.req.valid('json');
 
-  if (body.name === undefined) {
-    throw badRequest('没有需要更新的字段');
+  const current = await findOwnedItem(userId, id);
+  if (current.deletedAt !== null) {
+    throw badRequest('该物品已删除，无法修改');
+  }
+
+  if (body.categoryId !== undefined && body.categoryId !== null) {
+    await assertOwnedCategory(userId, body.categoryId);
+  }
+
+  const patch: Partial<ItemRow> = {};
+  if (body.name !== undefined) {
+    patch.name = body.name;
+  }
+  if (body.categoryId !== undefined) {
+    patch.categoryId = body.categoryId;
+  }
+  if (body.icon !== undefined) {
+    patch.iconType = body.icon?.type ?? null;
+    patch.iconValue = body.icon?.value ?? null;
+  }
+  if (body.status !== undefined) {
+    patch.status = body.status;
+  }
+  if (body.isFavorite !== undefined) {
+    patch.isFavorite = body.isFavorite;
+  }
+  if (body.note !== undefined) {
+    patch.note = body.note;
+  }
+  if (body.purchasePrice !== undefined) {
+    patch.purchasePrice = body.purchasePrice;
+  }
+  if (body.salePrice !== undefined) {
+    patch.salePrice = body.salePrice;
+  }
+  if (body.purchasedAt !== undefined) {
+    patch.purchasedAt = body.purchasedAt;
+  }
+  if (body.soldAt !== undefined) {
+    patch.soldAt = body.soldAt;
+  }
+  if (body.warrantyUntil !== undefined) {
+    patch.warrantyUntil = body.warrantyUntil;
   }
 
   const updated = await db
-    .update(itemsTable)
-    .set({ name: body.name, updatedAt: new Date() })
-    .where(and(eq(itemsTable.id, id), eq(itemsTable.userId, userId), isNull(itemsTable.deletedAt)))
+    .update(items)
+    .set(patch)
+    // 未删除判断必须下推到 where，避免前置检查后发生并发删除时改到墓碑行
+    .where(and(eq(items.id, id), eq(items.userId, userId), isNull(items.deletedAt)))
     .returning();
 
   const row = updated[0];
   if (row === undefined) {
-    throw notFound('物品不存在');
+    throw badRequest('该物品已删除，无法修改');
   }
   return c.json(toItemDTO(row), 200);
 });
 
-/* ------------------------------- 删除物品 ------------------------------- */
-
-const deleteItemRoute = createRoute({
+const deleteRoute = createRoute({
   method: 'delete',
   path: '/{id}',
-  tags: ['Items'],
-  summary: '删除物品（软删除）',
-  description: '写入 deletedAt 而非物理删除，保留墓碑记录以便把删除动作同步到其他端。',
+  tags: ['items'],
+  summary: '删除物品',
+  description: '软删除物品；重复删除同一物品时幂等返回首次删除后的记录。',
   middleware: [requireAuth] as const,
   security: [{ Bearer: [] }],
   request: { params: ItemIdParamSchema },
   responses: {
     200: {
-      description: '删除成功',
-      content: { 'application/json': { schema: DeleteItemResponseSchema } },
+      description: '已删除的物品',
+      content: { 'application/json': { schema: ItemDeleteResultSchema } },
     },
+    400: jsonError('参数有误'),
     401: jsonError('未通过身份校验'),
     404: jsonError('物品不存在'),
   },
 });
 
-app.openapi(deleteItemRoute, async (c) => {
+app.openapi(deleteRoute, async (c) => {
   const userId = c.get('userId');
   const { id } = c.req.valid('param');
-  const now = new Date();
 
+  const current = await findOwnedItem(userId, id);
+  if (current.deletedAt !== null) {
+    return c.json({ item: toItemDTO(current) }, 200);
+  }
+
+  // 目前没有表引用 items，因此无需事务清理关联数据；将来新增引用时必须同步补齐。
   const deleted = await db
-    .update(itemsTable)
-    .set({ deletedAt: now, updatedAt: now })
-    .where(and(eq(itemsTable.id, id), eq(itemsTable.userId, userId), isNull(itemsTable.deletedAt)))
+    .update(items)
+    .set({ deletedAt: sql`now()` })
+    .where(and(eq(items.id, id), eq(items.userId, userId), isNull(items.deletedAt)))
     .returning();
 
-  const row = deleted[0];
-  if (row !== undefined) {
-    return c.json({ id: row.id, deletedAt: (row.deletedAt ?? now).toISOString() }, 200);
-  }
-
-  // 已删除过则幂等返回，确保客户端重传删除请求不会失败
-  const existing = await db
-    .select()
-    .from(itemsTable)
-    .where(and(eq(itemsTable.id, id), eq(itemsTable.userId, userId)))
-    .limit(1);
-
-  const existingRow = existing[0];
-  if (existingRow?.deletedAt == null) {
-    throw notFound('物品不存在');
-  }
-  return c.json({ id: existingRow.id, deletedAt: existingRow.deletedAt.toISOString() }, 200);
+  // 并发删除可能使本次 update 无返回；重新读取即可幂等返回先完成的删除结果。
+  const row = deleted[0] ?? (await findOwnedItem(userId, id));
+  return c.json({ item: toItemDTO(row) }, 200);
 });
 
 export default app;
