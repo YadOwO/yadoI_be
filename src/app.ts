@@ -21,7 +21,7 @@ app.use(
   '*',
   cors({
     origin: env.CORS_ORIGINS === '*' ? '*' : env.CORS_ORIGINS.split(',').map((item) => item.trim()),
-    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Authorization', 'Content-Type'],
     maxAge: 86_400,
   }),
