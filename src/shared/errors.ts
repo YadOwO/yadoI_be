@@ -11,6 +11,7 @@ export const ErrorCode = {
   BadRequest: 'BAD_REQUEST',
   Unauthorized: 'UNAUTHORIZED',
   NotFound: 'NOT_FOUND',
+  Conflict: 'CONFLICT',
   Internal: 'INTERNAL_ERROR',
 } as const;
 
@@ -44,6 +45,9 @@ export const unauthorized = (message = '未通过身份校验'): AppError =>
 
 export const notFound = (message = '资源不存在'): AppError =>
   new AppError(404, ErrorCode.NotFound, message);
+
+export const conflict = (message: string, details?: unknown): AppError =>
+  new AppError(409, ErrorCode.Conflict, message, details);
 
 interface IErrorBody {
   code: string;
