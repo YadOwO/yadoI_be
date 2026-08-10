@@ -50,14 +50,6 @@ function isUniqueViolation(error: unknown): boolean {
   return false;
 }
 
-/**
- * 新用户的预置分类。
- *
- * 名称写死为中文：播种那一刻存入的内容之后就是用户自己的数据（可改名、可删除），
- * 不会再随界面语言变化。将来要做多语言，需在播种时按客户端语言选取对应的一套。
- */
-const DEFAULT_CATEGORIES: ReadonlyArray<string> = ['运动', '数码', '电竞'];
-
 function toCategoryDTO(row: CategoryRow): CategoryDTO {
   return {
     id: row.id,
@@ -76,33 +68,6 @@ function hasSameCategoryIds(
 ): boolean {
   const rowIds = new Set(rows.map((row) => row.id));
   return rows.length === categoryIds.length && categoryIds.every((id) => rowIds.has(id));
-}
-
-/**
- * 首次使用时播种预置分类。
- *
- * 判断依据是「该用户从来没有过任何分类」，计数刻意不排除软删除的记录：
- * 若只看未删除的，用户主动删光全部分类后再次拉列表就会被重新塞回来。
- *
- * 并发首次请求（如 iOS 与 Web 同时登录）依靠 (user_id, name) 的唯一索引兜底，
- * 冲突的那一份直接丢弃，不需要额外加锁。
- */
-async function seedDefaultCategories(userId: string): Promise<void> {
-  const existingCount = await db.$count(categories, eq(categories.userId, userId));
-  if (existingCount > 0) {
-    return;
-  }
-
-  await db
-    .insert(categories)
-    .values(
-      DEFAULT_CATEGORIES.map((name, index) => ({
-        userId,
-        name,
-        sortOrder: index,
-      })),
-    )
-    .onConflictDoNothing();
 }
 
 /** 按 ID 读取当前用户的分类，不存在则抛 404 */
@@ -127,7 +92,7 @@ const listRoute = createRoute({
   path: '/',
   tags: ['categories'],
   summary: '分类列表',
-  description: '返回当前用户所有未删除的分类，按展示顺序排列。首次调用时自动播种预置分类。',
+  description: '返回当前用户所有未删除的分类，按展示顺序排列。',
   middleware: [requireAuth] as const,
   security: [{ Bearer: [] }],
   responses: {
@@ -141,8 +106,6 @@ const listRoute = createRoute({
 
 app.openapi(listRoute, async (c) => {
   const userId = c.get('userId');
-
-  await seedDefaultCategories(userId);
 
   const rows = await db
     .select()
