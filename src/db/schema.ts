@@ -13,7 +13,8 @@
  *   事件时刻（创建、更新、删除）用 timestamptz，对外输出 ISO 8601
  * - 枚举列存 text 而非 pg enum：值集合仍在演进期，改动只需改代码、不必迁移数据库。
  *   合法值由各模块的 schemas.ts 用 Zod 把关，值本身用 snake_case
- * - 图标只有物品有，用 iconType + iconValue 两列表达（emoji / preset 素材库 / photo 用户上传），
+ * - 图标只有物品有，用 iconType + iconValue 两列表达（emoji / preset 素材库 / photo 照片 /
+ *   cutout 抠图），照片类另有 iconFocusX / iconFocusY 记录取景中心；
  *   数据结构一次定好、能力可分期实现，将来新增图标来源不必改表。分类本期不做图标
  */
 import { sql } from 'drizzle-orm';
@@ -21,6 +22,7 @@ import {
   boolean,
   check,
   date,
+  doublePrecision,
   index,
   integer,
   numeric,
@@ -89,10 +91,17 @@ export const items = yadoiSchema.table(
     name: text('name').notNull(),
     /** 所属分类，允许为空表示未分类；分类被删除时置空而不连带删除物品 */
     categoryId: uuid('category_id').references(() => categories.id, { onDelete: 'set null' }),
-    /** 图标来源：emoji / preset（内置素材库）/ photo（用户上传） */
+    /** 图标来源：emoji / preset（内置素材库）/ photo（照片）/ cutout（抠图） */
     iconType: text('icon_type'),
-    /** 图标内容，按 iconType 解释：emoji 字符、素材库 key 或对象存储 key */
+    /**
+     * 图标内容，按 iconType 解释：emoji 字符或素材库 key；
+     * photo / cutout 存 App 生成的文件名 `<uuid>.<ext>`，第二期作为对象存储的 key
+     */
     iconValue: text('icon_value'),
+    /** 原图小图标取景中心的横向位置，0 到 1，原点在左上角，没有记录时为空 */
+    iconFocusX: doublePrecision('icon_focus_x'),
+    /** 原图小图标取景中心的纵向位置，0 到 1，原点在左上角，没有记录时为空 */
+    iconFocusY: doublePrecision('icon_focus_y'),
     /** 生命周期状态：in_service（现役）/ retired（退役）/ sold（已卖出），三者互斥 */
     status: text('status').notNull().default('in_service'),
     /**

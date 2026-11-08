@@ -32,6 +32,10 @@ function toItemIcon(row: ItemRow): ItemDTO['icon'] {
   const result = ItemIconSchema.safeParse({
     type: row.iconType,
     value: row.iconValue,
+    focus:
+      row.iconFocusX !== null && row.iconFocusY !== null
+        ? { x: row.iconFocusX, y: row.iconFocusY }
+        : null,
   });
   if (result.success) {
     return result.data;
@@ -71,8 +75,20 @@ function toItemDTO(row: ItemRow): ItemDTO {
   };
 }
 
-/** 确认分类属于当前用户且尚未删除 */
-async function assertOwnedCategory(userId: string, categoryId: string): Promise<void> {
+/**
+ * 解析物品要保存的分类 ID。
+ *
+ * 离线队列里的操作可能引用在别处已删除的分类；此时按未分类保存，
+ * 避免整条操作被拒绝。传入 null / undefined 或分类不属于本人、已删除，都返回 null。
+ */
+async function resolveOwnedCategoryId(
+  userId: string,
+  categoryId: string | null | undefined,
+): Promise<string | null> {
+  if (categoryId === null || categoryId === undefined) {
+    return null;
+  }
+
   const rows = await db
     .select({ id: categories.id })
     .from(categories)
@@ -85,9 +101,7 @@ async function assertOwnedCategory(userId: string, categoryId: string): Promise<
     )
     .limit(1);
 
-  if (rows[0] === undefined) {
-    throw badRequest('分类不存在或已删除');
-  }
+  return rows[0]?.id ?? null;
 }
 
 /** 按 ID 读取当前用户的物品，不存在则抛 404 */
@@ -155,7 +169,7 @@ const createItemRoute = createRoute({
       description: '创建成功（或幂等返回已存在的记录）',
       content: { 'application/json': { schema: ItemSchema } },
     },
-    400: jsonError('参数有误、分类无效或 id 已被占用'),
+    400: jsonError('参数有误或 id 已被占用'),
     401: jsonError('未通过身份校验'),
   },
 });
@@ -164,9 +178,7 @@ app.openapi(createItemRoute, async (c) => {
   const userId = c.get('userId');
   const body = c.req.valid('json');
 
-  if (body.categoryId !== undefined && body.categoryId !== null) {
-    await assertOwnedCategory(userId, body.categoryId);
-  }
+  const categoryId = await resolveOwnedCategoryId(userId, body.categoryId);
 
   const inserted = await db
     .insert(items)
@@ -174,9 +186,11 @@ app.openapi(createItemRoute, async (c) => {
       ...(body.id === undefined ? {} : { id: body.id }),
       userId,
       name: body.name,
-      categoryId: body.categoryId ?? null,
+      categoryId,
       iconType: body.icon?.type ?? null,
       iconValue: body.icon?.value ?? null,
+      iconFocusX: body.icon?.focus?.x ?? null,
+      iconFocusY: body.icon?.focus?.y ?? null,
       status: body.status ?? 'in_service',
       isFavorite: body.isFavorite ?? false,
       note: body.note ?? null,
@@ -234,9 +248,9 @@ const updateRoute = createRoute({
       description: '更新后的物品',
       content: { 'application/json': { schema: ItemSchema } },
     },
-    400: jsonError('参数有误、分类无效或物品已删除'),
+    400: jsonError('参数有误'),
     401: jsonError('未通过身份校验'),
-    404: jsonError('物品不存在'),
+    404: jsonError('物品不存在或已删除'),
   },
 });
 
@@ -247,11 +261,7 @@ app.openapi(updateRoute, async (c) => {
 
   const current = await findOwnedItem(userId, id);
   if (current.deletedAt !== null) {
-    throw badRequest('该物品已删除，无法修改');
-  }
-
-  if (body.categoryId !== undefined && body.categoryId !== null) {
-    await assertOwnedCategory(userId, body.categoryId);
+    throw notFound('该物品已删除，无法修改');
   }
 
   const patch: Partial<ItemRow> = {};
@@ -259,11 +269,13 @@ app.openapi(updateRoute, async (c) => {
     patch.name = body.name;
   }
   if (body.categoryId !== undefined) {
-    patch.categoryId = body.categoryId;
+    patch.categoryId = await resolveOwnedCategoryId(userId, body.categoryId);
   }
   if (body.icon !== undefined) {
     patch.iconType = body.icon?.type ?? null;
     patch.iconValue = body.icon?.value ?? null;
+    patch.iconFocusX = body.icon?.focus?.x ?? null;
+    patch.iconFocusY = body.icon?.focus?.y ?? null;
   }
   if (body.status !== undefined) {
     patch.status = body.status;
@@ -299,7 +311,7 @@ app.openapi(updateRoute, async (c) => {
 
   const row = updated[0];
   if (row === undefined) {
-    throw badRequest('该物品已删除，无法修改');
+    throw notFound('该物品已删除，无法修改');
   }
   return c.json(toItemDTO(row), 200);
 });

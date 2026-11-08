@@ -3,7 +3,7 @@
  *
  * 所有查询都强制按当前用户过滤，删除一律采用软删除。
  */
-import { createRoute } from '@hono/zod-openapi';
+import { createRoute, z } from '@hono/zod-openapi';
 import { and, asc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 
 import { db } from '../../db/index.js';
@@ -12,6 +12,7 @@ import { requireAuth } from '../../middleware/auth.js';
 import { badRequest, conflict, notFound } from '../../shared/errors.js';
 import { createApp, jsonError } from '../../shared/openapi.js';
 import {
+  CategoryConflictDetailsSchema,
   CategoryCreateSchema,
   CategoryDeleteResultSchema,
   CategoryIdParamSchema,
@@ -85,6 +86,35 @@ async function findOwnedCategory(userId: string, id: string): Promise<CategoryRo
   return row;
 }
 
+/** 查找当前用户下同名且未删除的分类 ID，找不到返回 null */
+async function findActiveCategoryIdByName(userId: string, name: string): Promise<string | null> {
+  const rows = await db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(
+      and(eq(categories.userId, userId), eq(categories.name, name), isNull(categories.deletedAt)),
+    )
+    .limit(1);
+
+  return rows[0]?.id ?? null;
+}
+
+/**
+ * 构造同名冲突的 409 错误。
+ * 查不到已有分类属于极少见的并发删除，此时不带 details。
+ */
+async function buildDuplicateNameConflict(userId: string, name: string): Promise<ReturnType<typeof conflict>> {
+  const existingId = await findActiveCategoryIdByName(userId, name);
+  return conflict(
+    '已存在同名分类',
+    existingId === null
+      ? undefined
+      : ({ existingCategoryId: existingId } satisfies z.infer<
+          typeof CategoryConflictDetailsSchema
+        >),
+  );
+}
+
 const app = createApp();
 
 const listRoute = createRoute({
@@ -135,8 +165,9 @@ const createCategoryRoute = createRoute({
       description: '创建成功（或幂等返回已存在的记录）',
       content: { 'application/json': { schema: CategorySchema } },
     },
-    400: jsonError('参数有误、分类名重复或 id 已被占用'),
+    400: jsonError('参数有误或 id 已被占用'),
     401: jsonError('未通过身份校验'),
+    409: jsonError('已存在同名分类，details.existingCategoryId 为已有分类的 ID'),
   },
 });
 
@@ -167,7 +198,7 @@ app.openapi(createCategoryRoute, async (c) => {
       .returning();
   } catch (error) {
     if (isUniqueViolation(error)) {
-      throw badRequest('已存在同名分类');
+      throw await buildDuplicateNameConflict(userId, body.name);
     }
     throw error;
   }
@@ -320,9 +351,10 @@ const updateRoute = createRoute({
       description: '更新后的分类',
       content: { 'application/json': { schema: CategorySchema } },
     },
-    400: jsonError('参数有误或分类名重复'),
+    400: jsonError('参数有误'),
     401: jsonError('未通过身份校验'),
-    404: jsonError('分类不存在'),
+    404: jsonError('分类不存在或已删除'),
+    409: jsonError('已存在同名分类，details.existingCategoryId 为已有分类的 ID'),
   },
 });
 
@@ -333,7 +365,7 @@ app.openapi(updateRoute, async (c) => {
 
   const current = await findOwnedCategory(userId, id);
   if (current.deletedAt !== null) {
-    throw badRequest('该分类已删除，无法修改');
+    throw notFound('该分类已删除，无法修改');
   }
 
   let updated: CategoryRow[];
@@ -349,7 +381,7 @@ app.openapi(updateRoute, async (c) => {
       .returning();
   } catch (error) {
     if (isUniqueViolation(error)) {
-      throw badRequest('已存在同名分类');
+      throw await buildDuplicateNameConflict(userId, body.name);
     }
     throw error;
   }
@@ -357,7 +389,7 @@ app.openapi(updateRoute, async (c) => {
   const row = updated[0];
   if (row === undefined) {
     // 前置检查已确认存在且未删除，此处无更新只能是并发删除所致
-    throw badRequest('该分类已删除，无法修改');
+    throw notFound('该分类已删除，无法修改');
   }
   return c.json(toCategoryDTO(row), 200);
 });

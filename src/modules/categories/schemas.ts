@@ -108,6 +108,15 @@ export const CategoryUpdateSchema = z
   .strict()
   .openapi('CategoryUpdate');
 
+/**
+ * 分类同名 409 响应的 details 形状（仅作契约文档）。
+ *
+ * existingCategoryId 是已占用该名称的分类 ID，客户端据此把本地分类并到云端分类。
+ */
+export const CategoryConflictDetailsSchema = z.object({
+  existingCategoryId: z.string().uuid(),
+});
+
 /** 删除响应：返回软删除后的记录 */
 export const CategoryDeleteResultSchema = z
   .object({

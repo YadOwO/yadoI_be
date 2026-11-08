@@ -48,19 +48,32 @@ export const ItemIdParamSchema = z.object({
 });
 
 /**
+ * 图标取景中心。
+ *
+ * 此 schema 刻意不注册命名组件，与 ItemIconSchema 保持一致。
+ */
+export const ItemIconFocusSchema = z.object({
+  x: z.number().min(0).max(1).openapi({ description: '横向位置，0 为最左', example: 0.5 }),
+  y: z.number().min(0).max(1).openapi({ description: '纵向位置，0 为最上', example: 0.5 }),
+}).openapi({ description: '取景中心，按图片宽高归一到 0..1，原点在左上角' });
+
+/**
  * 物品图标。
  *
  * 图标类型与内容作为整体出现，避免产生仅有其中一个字段的非法状态。
  * 此 schema 刻意不注册命名组件，确保 OpenAPI 3.0 中 nullable 能正确保留。
  */
 export const ItemIconSchema = z.object({
-  type: z.enum(['emoji', 'preset']).openapi({
+  type: z.enum(['emoji', 'preset', 'photo', 'cutout']).openapi({
     description: '图标来源类型',
     example: 'emoji',
   }),
   value: z.string().max(ICON_VALUE_MAX_LENGTH).openapi({
-    description: 'emoji 字符或内置素材库 key',
+    description: 'emoji 字符、内置素材库 key，或 photo/cutout 的图片文件名 <uuid>.<ext>',
     example: '📷',
+  }),
+  focus: ItemIconFocusSchema.nullable().optional().openapi({
+    description: '取景中心，只对照片类图标有意义，未设置为 null',
   }),
 });
 
