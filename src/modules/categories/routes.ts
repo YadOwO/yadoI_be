@@ -13,6 +13,7 @@ import { badRequest, conflict, notFound } from '../../shared/errors.js';
 import { createApp, jsonError } from '../../shared/openapi.js';
 import {
   CategoryConflictDetailsSchema,
+  CategoryConflictErrorSchema,
   CategoryCreateSchema,
   CategoryDeleteResultSchema,
   CategoryIdParamSchema,
@@ -167,7 +168,10 @@ const createCategoryRoute = createRoute({
     },
     400: jsonError('参数有误或 id 已被占用'),
     401: jsonError('未通过身份校验'),
-    409: jsonError('已存在同名分类，details.existingCategoryId 为已有分类的 ID'),
+    409: {
+      description: '已存在同名分类，details.existingCategoryId 为已有分类的 ID；并发删除时可能不带 details',
+      content: { 'application/json': { schema: CategoryConflictErrorSchema } },
+    },
   },
 });
 
@@ -354,7 +358,10 @@ const updateRoute = createRoute({
     400: jsonError('参数有误'),
     401: jsonError('未通过身份校验'),
     404: jsonError('分类不存在或已删除'),
-    409: jsonError('已存在同名分类，details.existingCategoryId 为已有分类的 ID'),
+    409: {
+      description: '已存在同名分类，details.existingCategoryId 为已有分类的 ID；并发删除时可能不带 details',
+      content: { 'application/json': { schema: CategoryConflictErrorSchema } },
+    },
   },
 });
 

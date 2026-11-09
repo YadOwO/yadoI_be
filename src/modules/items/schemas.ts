@@ -15,6 +15,9 @@ const NOTE_MAX_LENGTH = 2_000;
 /** 图标内容长度上限，兼容 emoji 与内置素材库 key */
 const ICON_VALUE_MAX_LENGTH = 256;
 
+/** 照片类图标文件名：App 生成的 UUID 加扩展名 */
+const ICON_FILE_NAME_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,10}$/i;
+
 /** 金额上限，与数据库 numeric(12, 2) 的可表示范围一致 */
 const AMOUNT_MAX = 9_999_999_999.99;
 
@@ -63,19 +66,31 @@ export const ItemIconFocusSchema = z.object({
  * 图标类型与内容作为整体出现，避免产生仅有其中一个字段的非法状态。
  * 此 schema 刻意不注册命名组件，确保 OpenAPI 3.0 中 nullable 能正确保留。
  */
-export const ItemIconSchema = z.object({
-  type: z.enum(['emoji', 'preset', 'photo', 'cutout']).openapi({
-    description: '图标来源类型',
-    example: 'emoji',
-  }),
-  value: z.string().max(ICON_VALUE_MAX_LENGTH).openapi({
-    description: 'emoji 字符、内置素材库 key，或 photo/cutout 的图片文件名 <uuid>.<ext>',
-    example: '📷',
-  }),
-  focus: ItemIconFocusSchema.nullable().optional().openapi({
-    description: '取景中心，只对照片类图标有意义，未设置为 null',
-  }),
-});
+export const ItemIconSchema = z
+  .object({
+    type: z.enum(['emoji', 'preset', 'photo', 'cutout']).openapi({
+      description: '图标来源类型',
+      example: 'emoji',
+    }),
+    value: z.string().max(ICON_VALUE_MAX_LENGTH).openapi({
+      description:
+        'emoji 字符、内置素材库 key；photo/cutout 为 App 生成的文件名 <uuid>.<ext>（服务端校验格式）',
+      example: '📷',
+    }),
+    focus: ItemIconFocusSchema.nullable().optional().openapi({
+      description: '取景中心，只对照片类图标有意义，未设置为 null',
+    }),
+  })
+  .superRefine((icon, ctx) => {
+    // 照片类图标的 value 将来会作为对象存储 key，入库前必须保证格式
+    if ((icon.type === 'photo' || icon.type === 'cutout') && !ICON_FILE_NAME_PATTERN.test(icon.value)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['value'],
+        message: 'photo/cutout 的 value 必须是 <uuid>.<ext> 格式的文件名',
+      });
+    }
+  });
 
 /** 对外输出的物品结构 */
 export const ItemSchema = z
@@ -152,7 +167,10 @@ export const ItemCreateSchema = z
       .uuid()
       .nullable()
       .optional()
-      .openapi({ description: '所属分类 ID' }),
+      .openapi({
+        description:
+          '所属分类 ID；分类不存在、已删除或不属于本人时按未分类（null）保存，不报错，以返回的 categoryId 为准',
+      }),
     icon: ItemIconSchema.nullable().optional().openapi({ description: '物品图标' }),
     status: ItemStatusSchema.optional().openapi({ description: '不传默认为 in_service' }),
     isFavorite: z.boolean().optional().openapi({ description: '不传默认为 false' }),
@@ -169,7 +187,12 @@ export const ItemCreateSchema = z
 export const ItemUpdateSchema = z
   .object({
     name: ItemNameSchema.optional(),
-    categoryId: z.string().uuid().nullable().optional(),
+    categoryId: z
+      .string()
+      .uuid()
+      .nullable()
+      .optional()
+      .openapi({ description: '同创建：分类无效时按未分类（null）保存，以返回值为准' }),
     icon: ItemIconSchema.nullable().optional(),
     status: ItemStatusSchema.optional(),
     isFavorite: z.boolean().optional(),

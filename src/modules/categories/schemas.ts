@@ -8,6 +8,8 @@
  */
 import { z } from '@hono/zod-openapi';
 
+import { ErrorSchema } from '../../shared/openapi.js';
+
 /** 分类名长度上限，够放中英文短词即可 */
 const NAME_MAX_LENGTH = 30;
 
@@ -109,13 +111,19 @@ export const CategoryUpdateSchema = z
   .openapi('CategoryUpdate');
 
 /**
- * 分类同名 409 响应的 details 形状（仅作契约文档）。
+ * 分类同名 409 响应的 details 形状。
  *
  * existingCategoryId 是已占用该名称的分类 ID，客户端据此把本地分类并到云端分类。
+ * 并发删除等极少见情况下 details 可能缺失，客户端此时按普通冲突提示用户。
  */
 export const CategoryConflictDetailsSchema = z.object({
   existingCategoryId: z.string().uuid(),
 });
+
+/** 分类同名 409 的错误响应；details 在极少见的并发删除下可能缺失 */
+export const CategoryConflictErrorSchema = ErrorSchema.extend({
+  details: CategoryConflictDetailsSchema.optional(),
+}).openapi('CategoryConflictError');
 
 /** 删除响应：返回软删除后的记录 */
 export const CategoryDeleteResultSchema = z

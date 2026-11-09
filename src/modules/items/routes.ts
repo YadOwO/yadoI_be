@@ -155,7 +155,7 @@ const createItemRoute = createRoute({
   path: '/',
   tags: ['items'],
   summary: '新建物品',
-  description: '允许客户端传入自行生成的 id；重复提交同一 id 时幂等返回已有记录。',
+  description: '允许客户端传入自行生成的 id；重复提交同一 id 时幂等返回已有记录。categoryId 无效时物品按未分类保存。',
   middleware: [requireAuth] as const,
   security: [{ Bearer: [] }],
   request: {
@@ -233,7 +233,7 @@ const updateRoute = createRoute({
   path: '/{id}',
   tags: ['items'],
   summary: '更新物品',
-  description: '只更新请求中出现的字段；可空字段传 null 表示清空。',
+  description: '只更新请求中出现的字段；可空字段传 null 表示清空。categoryId 无效时物品按未分类保存。',
   middleware: [requireAuth] as const,
   security: [{ Bearer: [] }],
   request: {
