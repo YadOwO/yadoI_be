@@ -91,7 +91,8 @@ middleware/                 请求级横切逻辑
 - 本产品所有表位于 `yadoi` schema 下，通过 `yadoiSchema.table()` 定义。
 - 跨产品读取数据只读对方暴露的 view，禁止直接读其他 schema 的表。
 - 删除采用软删除（写 `deletedAt`），禁止物理删除业务数据。软删除的作用是防误删与保留审计线索，
-  列表接口不下发已删除记录。
+  列表接口不下发已删除记录。唯一例外是用户注销账号（`DELETE /v1/account`，`modules/account/`）：在一个事务里物理删除
+  该用户的全部业务数据，包括软删除的记录；以后新增按用户存数据的表，要一并加进这个事务。
 - 每张业务表都应具备 `id`(uuid) / `user_id` / `created_at` / `updated_at` / `deleted_at`。
 - 表结构变更走 `db:generate` + `db:migrate`，本地与生产一致，**不要用 `db:push`**：
   push 不写迁移记录，会让库的实际结构与迁移历史脱节，之后 generate 算出的差异是错的。

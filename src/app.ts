@@ -9,6 +9,7 @@ import { logger } from 'hono/logger';
 
 import { env } from './config/env.js';
 import { pingDb } from './db/index.js';
+import accountRoutes from './modules/account/routes.js';
 import categoriesRoutes from './modules/categories/routes.js';
 import itemsRoutes from './modules/items/routes.js';
 import { handleError } from './shared/errors.js';
@@ -51,6 +52,7 @@ app.openAPIRegistry.registerComponent('securitySchemes', 'Bearer', {
 });
 
 // 业务模块以子应用形式挂载。鉴权挂在各路由的 middleware 字段上，不在此处用 app.use。
+app.route('/v1/account', accountRoutes);
 app.route('/v1/categories', categoriesRoutes);
 app.route('/v1/items', itemsRoutes);
 

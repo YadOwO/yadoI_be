@@ -48,6 +48,7 @@ pnpm run dev
 | --- | --- |
 | `pnpm run dev` | 开发模式（热重载） |
 | `pnpm run typecheck` | 类型检查 |
+| `pnpm test` | 集成测试（需本地 Postgres 已迁移，会读 .env 的 DATABASE_URL） |
 | `pnpm run build` | 编译到 `dist/` |
 | `pnpm start` | 运行编译产物 |
 | `pnpm run db:generate` | 表结构变更后生成迁移文件 |
