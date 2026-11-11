@@ -82,6 +82,7 @@ middleware/                 请求级横切逻辑
 - 所有涉及用户数据的查询**必须**按 `userId` 过滤，不得依赖客户端传入的用户标识。
 - 新增业务路由**必须**在 `createRoute` 的 `middleware` 字段挂 `requireAuth`。
   不要改用 `app.use('/*', ...)`：子应用挂载后该通配不匹配模块根路径，会造成接口绕过鉴权。
+- `requireAuth` 会拒绝注销名单（`yadoi.deleted_users`）里的用户；只有 `DELETE /v1/account` 用 `requireAuthIncludingDeleted`，使已注销的用户可以重试。
 - 不要在日志或错误响应中输出 token、密钥、完整 JWT 内容。
 - 未预期异常只对外返回通用信息，详细堆栈仅记录服务端日志。
 - 不要提交 `.env`；新增配置项同步补充到 `.env.example`。
@@ -91,8 +92,9 @@ middleware/                 请求级横切逻辑
 - 本产品所有表位于 `yadoi` schema 下，通过 `yadoiSchema.table()` 定义。
 - 跨产品读取数据只读对方暴露的 view，禁止直接读其他 schema 的表。
 - 删除采用软删除（写 `deletedAt`），禁止物理删除业务数据。软删除的作用是防误删与保留审计线索，
-  列表接口不下发已删除记录。唯一例外是用户注销账号（`DELETE /v1/account`，`modules/account/`）：在一个事务里物理删除
-  该用户的全部业务数据，包括软删除的记录；以后新增按用户存数据的表，要一并加进这个事务。
+  列表接口不下发已删除记录。唯一例外是用户注销账号（`DELETE /v1/account`，`modules/account/`）：
+  会先删除 Logto 用户，再在一个事务里写入 `yadoi.deleted_users`、物理删除该用户的全部业务数据
+  （包括软删除的记录）；以后新增按用户存数据的表，要一并加进这个事务。
 - 每张业务表都应具备 `id`(uuid) / `user_id` / `created_at` / `updated_at` / `deleted_at`。
 - 表结构变更走 `db:generate` + `db:migrate`，本地与生产一致，**不要用 `db:push`**：
   push 不写迁移记录，会让库的实际结构与迁移历史脱节，之后 generate 算出的差异是错的。

@@ -12,13 +12,17 @@ export const ErrorCode = {
   Unauthorized: 'UNAUTHORIZED',
   NotFound: 'NOT_FOUND',
   Conflict: 'CONFLICT',
+  /** Logto Management API 调用失败（注销账号时删除 Logto 用户） */
+  LogtoUpstreamError: 'LOGTO_UPSTREAM_ERROR',
+  /** 服务端缺少必要配置，功能暂不可用 */
+  ServiceNotConfigured: 'SERVICE_NOT_CONFIGURED',
   Internal: 'INTERNAL_ERROR',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
 
 /** 可安全返回给客户端的错误状态码 */
-export type AppErrorStatus = 400 | 401 | 403 | 404 | 409 | 500;
+export type AppErrorStatus = 400 | 401 | 403 | 404 | 409 | 500 | 502 | 503;
 
 /**
  * 业务异常。抛出后由全局 onError 统一转换为标准错误响应。
@@ -48,6 +52,14 @@ export const notFound = (message = '资源不存在'): AppError =>
 
 export const conflict = (message: string, details?: unknown): AppError =>
   new AppError(409, ErrorCode.Conflict, message, details);
+
+/** Logto 账号服务不可用或返回异常，可重试 */
+export const logtoUpstreamError = (): AppError =>
+  new AppError(502, ErrorCode.LogtoUpstreamError, '账号服务暂时不可用，请稍后重试');
+
+/** 注销所需的 Logto Management API 凭证未配置 */
+export const serviceNotConfigured = (): AppError =>
+  new AppError(503, ErrorCode.ServiceNotConfigured, '注销服务尚未配置');
 
 interface IErrorBody {
   code: string;

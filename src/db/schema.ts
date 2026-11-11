@@ -143,6 +143,21 @@ export const items = yadoiSchema.table(
   ],
 );
 
+/**
+ * 注销名单：已注销账号的 Logto 用户 ID。
+ *
+ * 这不是业务表，所以没有 id、updated_at、deleted_at 这些列；只存 Logto 用户 ID 和注销时间。
+ * 鉴权时用它拒绝注销前签发、还没过期的 access token（JWT 离线验签，Logto 删用户后旧 token 仍能过验签）。
+ * 业务数据原则上只做软删除；用户注销账号是唯一的例外，会物理删除这个用户的全部
+ * items、categories，并写入本表。
+ */
+export const deletedUsers = yadoiSchema.table('deleted_users', {
+  /** 已注销的 Logto 用户 ID（JWT 的 sub） */
+  userId: text('user_id').primaryKey(),
+  /** 注销时间 */
+  deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type CategoryRow = typeof categories.$inferSelect;
 export type CategoryInsert = typeof categories.$inferInsert;
 export type ItemRow = typeof items.$inferSelect;

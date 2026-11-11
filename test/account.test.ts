@@ -1,5 +1,5 @@
 /**
- * 注销账号集成测试：开发态免鉴权，直接连接 DATABASE_URL 指向的库（需已迁移）。
+ * 注销账号集成测试：开发态免鉴权（不调用 Logto），直接连接 DATABASE_URL 指向的库（需已迁移）。
  */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -16,9 +16,10 @@ process.env.AUTH_DEV_USER_ID = USER_ID;
 
 const { default: app } = await import('../src/app.js');
 const { closeDb, db } = await import('../src/db/index.js');
-const { categories, items } = await import('../src/db/schema.js');
+const { categories, deletedUsers, items } = await import('../src/db/schema.js');
 
 after(async () => {
+  await db.delete(deletedUsers).where(eq(deletedUsers.userId, USER_ID));
   await db.delete(items).where(eq(items.userId, OTHER_USER_ID));
   await db.delete(categories).where(eq(categories.userId, OTHER_USER_ID));
   await db.delete(items).where(eq(items.userId, USER_ID));
@@ -27,7 +28,7 @@ after(async () => {
 });
 
 describe('注销账号', () => {
-  test('只删本人数据（包括软删除记录），不动别人，且可重复调用', async () => {
+  test('只删本人数据（包括软删除记录），写入注销名单并拦截旧身份，不动别人，且可重复调用', async () => {
     const [activeCategory] = await db
       .insert(categories)
       .values({ userId: USER_ID, name: `在用分类-${randomUUID()}` })
@@ -67,11 +68,37 @@ describe('注销账号', () => {
     assert.equal(otherItems[0]?.categoryId, otherCategory.id);
     assert.equal(otherItems[0]?.deletedAt, null);
 
+    // 注销名单：只有本人在名单里
+    const deletedSelf = await db.select().from(deletedUsers).where(eq(deletedUsers.userId, USER_ID));
+    const deletedOther = await db.select().from(deletedUsers).where(eq(deletedUsers.userId, OTHER_USER_ID));
+    assert.equal(deletedSelf.length, 1);
+    assert.equal(deletedOther.length, 0);
+
+    // 注销后同一身份（等同注销前签发的旧 token）的读写接口一律 401
+    const listResponse = await app.request('/v1/categories');
+    assert.equal(listResponse.status, 401);
+    const createCategoryResponse = await app.request('/v1/categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: `注销后新建分类-${randomUUID()}` }),
+    });
+    assert.equal(createCategoryResponse.status, 401);
+    const createItemResponse = await app.request('/v1/items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '注销后新建物品' }),
+    });
+    assert.equal(createItemResponse.status, 401);
+
+    // 旧身份写不回去：本人数据仍为 0 行
+    assert.equal((await db.select().from(items).where(eq(items.userId, USER_ID))).length, 0);
+    assert.equal((await db.select().from(categories).where(eq(categories.userId, USER_ID))).length, 0);
+
     const retryResponse = await app.request('/v1/account', { method: 'DELETE' });
     assert.equal(retryResponse.status, 204);
   });
 
-  test('openapi.json 包含 DELETE /v1/account', async () => {
+  test('openapi.json 包含 DELETE /v1/account 及其 204、502、503 响应', async () => {
     const response = await app.request('/openapi.json');
     assert.equal(response.status, 200);
     const doc: unknown = await response.json();
@@ -80,5 +107,14 @@ describe('注销账号', () => {
     assert.ok(typeof paths === 'object' && paths !== null && '/v1/account' in paths);
     const accountPath = paths['/v1/account'];
     assert.ok(typeof accountPath === 'object' && accountPath !== null && 'delete' in accountPath);
+    const deleteOperation = accountPath.delete;
+    assert.ok(
+      typeof deleteOperation === 'object' && deleteOperation !== null && 'responses' in deleteOperation,
+    );
+    const responses = deleteOperation.responses;
+    assert.ok(typeof responses === 'object' && responses !== null);
+    assert.ok('204' in responses);
+    assert.ok('502' in responses);
+    assert.ok('503' in responses);
   });
 });

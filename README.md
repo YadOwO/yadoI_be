@@ -48,13 +48,33 @@ pnpm run dev
 | --- | --- |
 | `pnpm run dev` | 开发模式（热重载） |
 | `pnpm run typecheck` | 类型检查 |
-| `pnpm test` | 集成测试（需本地 Postgres 已迁移，会读 .env 的 DATABASE_URL） |
+| `pnpm test` | 集成测试（需本地 Postgres 已迁移；需要环境变量 `DATABASE_URL`、`LOGTO_ISSUER`、`LOGTO_AUDIENCE`，缺任一项 env 校验会直接 exit(1)，可写在 .env 里） |
 | `pnpm run build` | 编译到 `dist/` |
 | `pnpm start` | 运行编译产物 |
 | `pnpm run db:generate` | 表结构变更后生成迁移文件 |
 | `pnpm run db:migrate` | 执行迁移（本地与生产统一走这条） |
 | `pnpm run db:push` | 不要使用：会绕过迁移记录，导致库与迁移历史脱节 |
 | `pnpm run db:studio` | 打开 Drizzle Studio |
+
+## 注销账号
+
+`DELETE /v1/account`（成功返回 204）会**永久删除芽豆账号（Logto 用户）**，再在一个事务里写入注销名单
+`yadoi.deleted_users`、物理删除该用户在芽豆有物的全部云端数据（物品、分类，含已删除的记录）。
+芽豆系列所有 App 共用同一个 Logto 账号，注销后在所有芽豆 App 里都无法再登录，操作不可撤销。
+注销之后，旧 token 调用其他接口一律返回 401；接口可重复调用（用于失败重试）。
+本接口不清除芽豆资产等其他产品的云端数据。
+
+- 需要配置 Logto Management API 的 M2M 凭证：`LOGTO_M2M_APP_ID`、`LOGTO_M2M_APP_SECRET`
+  （见 `.env.example`）。没配时真实用户调用返回 503，开发态免鉴权的假用户不受影响。
+- Logto 删除失败返回 502，此时什么都没动，可以重试。
+- App 要先停掉写请求，再调用注销接口。
+
+App 接入要求：
+
+- 确认弹窗必须用严重措辞，照芽豆资产的「注销芽豆账号？」文案写明：账号将被永久删除，
+  所有芽豆 App 都无法再登录；芽豆有物云端数据将被永久删除；此操作无法撤销。
+  按钮用红色的「继续注销」。
+- 调用失败时提示「注销没有完成，请检查网络后重试」，且不退出登录。
 
 ## 部署
 
