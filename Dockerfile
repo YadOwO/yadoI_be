@@ -29,6 +29,9 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package.json ./package.json
 
+# 迁移 SQL 和 meta 随镜像发布，部署脚本在切换新版本前用 node dist/db/migrate.js 执行
+COPY drizzle ./drizzle
+
 # 使用非 root 用户运行
 USER node
 

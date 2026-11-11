@@ -52,7 +52,8 @@ pnpm run dev
 | `pnpm run build` | 编译到 `dist/` |
 | `pnpm start` | 运行编译产物 |
 | `pnpm run db:generate` | 表结构变更后生成迁移文件 |
-| `pnpm run db:migrate` | 执行迁移（本地与生产统一走这条） |
+| `pnpm run db:migrate` | 本地执行迁移（drizzle-kit；生产由部署脚本自动执行） |
+| `pnpm run db:migrate:prod` | 先 `build`，用编译后的脚本执行迁移，和生产相同 |
 | `pnpm run db:push` | 不要使用：会绕过迁移记录，导致库与迁移历史脱节 |
 | `pnpm run db:studio` | 打开 Drizzle Studio |
 
@@ -87,3 +88,27 @@ docker run -d --name yadoi-be -p 7788:7788 --env-file .env.production yadoi-be:l
 
 生产环境须设 `NODE_ENV=production`（使 `AUTH_DEV_BYPASS` 强制失效），并把 `CORS_ORIGINS`
 改为具体域名而非 `*`。
+
+### 日常发布
+
+在 `dev` 分支开发，合并到 `main` 后 GitHub Actions 构建 amd64 镜像并推到 GHCR，再经 SSH forced command
+触发服务器上的 `/opt/yado/scripts/deploy-yadoi-be.sh`（源文件 `deploy/scripts/deploy-yadoi-be.sh`）：
+
+1. 拉新镜像；
+2. 用新镜像执行 `node dist/db/migrate.js`，跑完 `drizzle/` 里未执行的迁移（在一个事务里，失败整体回滚）；
+3. 迁移成功后才替换容器并等健康检查。
+
+迁移失败时部署中止，旧服务继续运行，Bark 推送「数据库迁移失败」。部署时自动迁移，不用再手动执行
+`db:migrate`。因为回滚镜像不会回滚表结构，迁移要兼容上一版代码。
+
+### 部署结果通知（Bark）
+
+在 GitHub 仓库的 `Settings → Secrets and variables → Actions` 新建 Repository Secret：
+
+| Secret | 值 |
+| --- | --- |
+| `BARK_DEVICE_KEY` | Bark App 中推送地址的设备 Key 部分，不包含 `https://api.day.app/` |
+
+可与其他仓库使用同一个设备 Key，但需要在本仓库单独配置。
+生产部署成功或失败后会发送通知（迁移失败会单独标出），点击通知可打开对应 Actions 日志；取消运行不发送。
+未配置 Key 时跳过通知，通知服务异常也不会改变部署结果。

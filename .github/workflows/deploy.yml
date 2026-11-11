@@ -57,7 +57,11 @@ jobs:
       # 服务器上那把公钥在 authorized_keys 里被 forced command 限制为
       # 只能执行 /opt/yado/scripts/deploy-yadoi-be.sh，因此这里传什么命令都会被忽略，
       # 写 true 仅作占位。部署脚本的输出与退出码会原样返回，失败时本步骤即失败。
+      # 退出码 3 表示数据库迁移失败：部署已中止，旧版本继续运行。
+      # run 默认是 bash -e，所以用 `|| code=$?` 捕获退出码写进输出，再原样 exit，
+      # 这样本步骤仍然失败，后面的 Bark 步骤又能据此区分迁移失败。
       - name: 触发服务器部署
+        id: deploy
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           # 地址与主机公钥都不是秘密（IP 可从 DNS 查到），写在此处便于换机器时一处修改。
@@ -69,4 +73,55 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           # 固定主机公钥而非用 StrictHostKeyChecking=no，避免中间人攻击
           echo "$DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
-          ssh -i ~/.ssh/deploy_key "yado@$DEPLOY_HOST" true
+          code=0
+          ssh -i ~/.ssh/deploy_key "yado@$DEPLOY_HOST" true || code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
+
+      # 成功时 SSH 已等待迁移完成和容器健康检查通过；退出码 3 表示迁移失败；构建、推送或部署失败也会走到这里。
+      # 取消运行不发送通知。通知渠道故障不得改变部署本身的结果。
+      - name: Bark 通知部署结果
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          BARK_DEVICE_KEY: ${{ secrets.BARK_DEVICE_KEY }}
+          DEPLOY_STATUS: ${{ job.status }}
+          DEPLOY_EXIT_CODE: ${{ steps.deploy.outputs.exit_code }}
+        run: |
+          if [ -z "$BARK_DEVICE_KEY" ]; then
+            echo "::warning::未配置 BARK_DEVICE_KEY，跳过 Bark 部署通知。"
+            exit 0
+          fi
+
+          if [ "$DEPLOY_STATUS" = "success" ]; then
+            TITLE="✅ yadoI_be 生产部署成功"
+            DETAIL="服务器部署完成，数据库迁移已执行，容器健康检查通过。"
+          elif [ "$DEPLOY_EXIT_CODE" = "3" ]; then
+            TITLE="❌ yadoI_be 数据库迁移失败"
+            DETAIL="迁移失败已整体回滚，部署已中止，旧版本继续运行。请查看部署日志。"
+          else
+            TITLE="❌ yadoI_be 生产部署失败"
+            DETAIL="构建、镜像推送或服务器部署失败，请查看部署日志。"
+          fi
+
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}"
+          BODY="$(printf '%s\n分支：%s\n提交：%s\n执行者：%s' "$DETAIL" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}" "$GITHUB_ACTOR")"
+          # jq 负责 JSON 转义；Key 只经请求正文发送，不输出到日志。
+          PAYLOAD="$(jq -n \
+            --arg device_key "$BARK_DEVICE_KEY" \
+            --arg title "$TITLE" \
+            --arg body "$BODY" \
+            --arg url "$RUN_URL" \
+            '{device_key: $device_key, title: $title, body: $body, group: "yadoI_be 部署", url: $url}')"
+
+          RESPONSE="$(curl --fail --silent --show-error \
+            --connect-timeout 5 --max-time 15 \
+            --header 'Content-Type: application/json' \
+            --data-binary "$PAYLOAD" \
+            https://api.day.app/push)"
+          if ! printf '%s' "$RESPONSE" | jq -e '.code == 200' > /dev/null; then
+            echo "::warning::Bark 未确认通知发送成功，请检查设备 Key 与通知服务。"
+            exit 1
+          fi
+          echo "已将部署结果发送到 Bark。"
