@@ -51,7 +51,7 @@ async function main(): Promise<void> {
     });
     console.log('数据库迁移完成');
   } catch (error: unknown) {
-    console.error('数据库迁移失败，已整体回滚：', error);
+    console.error('数据库迁移失败，本次迁移未生效：', error);
     process.exitCode = 1;
   } finally {
     await client.end({ timeout: 5 });

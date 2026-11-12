@@ -31,7 +31,7 @@ docker compose -f "$COMPOSE_FILE" pull "$SERVICE"
 # 迁移在一个事务里，失败会整体回滚；这里不能吞掉错误，否则会带着没迁移的库切换到新代码。
 echo '  执行数据库迁移（新镜像）...'
 if ! docker compose -f "$COMPOSE_FILE" run --rm --no-deps -T "$SERVICE" node dist/db/migrate.js; then
-  echo "[$(date '+%F %T')] 数据库迁移失败，已中止部署：没有切换版本，旧容器继续运行（镜像 ${BEFORE}）。迁移在事务里，已整体回滚。修好迁移后重新部署即可。" >&2
+  echo "[$(date '+%F %T')] 数据库迁移步骤失败，已中止部署：没有切换版本，旧容器继续运行（镜像 ${BEFORE}）。可能是迁移 SQL 出错（迁移在事务里，未生效），也可能是迁移容器没能启动（compose 配置、env_file 里缺 DATABASE_URL、镜像缺 dist/db/migrate.js 等），请看上面的输出确认原因，修好后重新部署。" >&2
   exit "$MIGRATION_FAILED_EXIT_CODE"
 fi
 
