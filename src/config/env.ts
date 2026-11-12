@@ -6,6 +6,15 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
+/**
+ * 可选的非空字符串。dotenv 里写成 `KEY=` 会得到空字符串，这里把空字符串视为未配置，
+ * 避免留空的可选配置让整个服务启动失败。
+ */
+const optionalNonEmptyString = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.string().min(1).optional(),
+);
+
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(7788),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -25,9 +34,9 @@ const envSchema = z.object({
   AUTH_DEV_USER_ID: z.string().min(1).default('dev-user-0001'),
 
   /** Logto Machine-to-Machine 应用 ID，用于调用 Management API 删除用户；留空则注销接口对真实用户返回 503 */
-  LOGTO_M2M_APP_ID: z.string().min(1).optional(),
+  LOGTO_M2M_APP_ID: optionalNonEmptyString,
   /** Logto Machine-to-Machine 应用密钥，与 LOGTO_M2M_APP_ID 成对配置 */
-  LOGTO_M2M_APP_SECRET: z.string().min(1).optional(),
+  LOGTO_M2M_APP_SECRET: optionalNonEmptyString,
   /** Logto Management API 的 resource indicator，默认为 Logto 内置值 */
   LOGTO_MANAGEMENT_RESOURCE: z.string().min(1).default('https://default.logto.app/api'),
 

@@ -66,7 +66,8 @@ pnpm run dev
 本接口不清除芽豆资产等其他产品的云端数据。
 
 - 需要配置 Logto Management API 的 M2M 凭证：`LOGTO_M2M_APP_ID`、`LOGTO_M2M_APP_SECRET`
-  （见 `.env.example`）。没配时真实用户调用返回 503，开发态免鉴权的假用户不受影响。
+  （见 `.env.example`）。没配时真实用户调用返回 503；开发态免鉴权的假用户不调用 Logto，所以不受这项配置影响。
+- 开发态免鉴权下调用注销，同样会物理删除数据，并把固定的 `AUTH_DEV_USER_ID` 写进 `yadoi.deleted_users`，之后本地所有业务接口都返回 401。要恢复，可以执行 `DELETE FROM yadoi.deleted_users WHERE user_id = '<AUTH_DEV_USER_ID>';`，或者换一个 `AUTH_DEV_USER_ID`。
 - Logto 删除失败返回 502，此时什么都没动，可以重试。
 - App 要先停掉写请求，再调用注销接口。
 
