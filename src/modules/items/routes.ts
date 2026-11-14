@@ -44,6 +44,18 @@ function toItemIcon(row: ItemRow): ItemDTO['icon'] {
   throw new Error(`物品 ${row.id} 的图标数据不符合契约`);
 }
 
+/** 把对外的嵌套图标结构展开成数据库的四个图标列；传 null 表示没有图标或要清空图标，四列都写 null */
+function toIconColumns(
+  icon: ItemDTO['icon'],
+): Pick<ItemRow, 'iconType' | 'iconValue' | 'iconFocusX' | 'iconFocusY'> {
+  return {
+    iconType: icon?.type ?? null,
+    iconValue: icon?.value ?? null,
+    iconFocusX: icon?.focus?.x ?? null,
+    iconFocusY: icon?.focus?.y ?? null,
+  };
+}
+
 /** 把数据库状态收窄为接口契约允许的取值 */
 function toItemStatus(row: ItemRow): ItemDTO['status'] {
   const result = ItemStatusSchema.safeParse(row.status);
@@ -187,10 +199,7 @@ app.openapi(createItemRoute, async (c) => {
       userId,
       name: body.name,
       categoryId,
-      iconType: body.icon?.type ?? null,
-      iconValue: body.icon?.value ?? null,
-      iconFocusX: body.icon?.focus?.x ?? null,
-      iconFocusY: body.icon?.focus?.y ?? null,
+      ...toIconColumns(body.icon ?? null),
       status: body.status ?? 'in_service',
       isFavorite: body.isFavorite ?? false,
       note: body.note ?? null,
@@ -272,10 +281,7 @@ app.openapi(updateRoute, async (c) => {
     patch.categoryId = await resolveOwnedCategoryId(userId, body.categoryId);
   }
   if (body.icon !== undefined) {
-    patch.iconType = body.icon?.type ?? null;
-    patch.iconValue = body.icon?.value ?? null;
-    patch.iconFocusX = body.icon?.focus?.x ?? null;
-    patch.iconFocusY = body.icon?.focus?.y ?? null;
+    Object.assign(patch, toIconColumns(body.icon));
   }
   if (body.status !== undefined) {
     patch.status = body.status;

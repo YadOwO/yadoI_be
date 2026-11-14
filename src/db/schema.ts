@@ -159,6 +159,4 @@ export const deletedUsers = yadoiSchema.table('deleted_users', {
 });
 
 export type CategoryRow = typeof categories.$inferSelect;
-export type CategoryInsert = typeof categories.$inferInsert;
 export type ItemRow = typeof items.$inferSelect;
-export type ItemInsert = typeof items.$inferInsert;

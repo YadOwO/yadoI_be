@@ -4,7 +4,7 @@
  * 所有查询都强制按当前用户过滤，删除一律采用软删除。
  */
 import { createRoute, z } from '@hono/zod-openapi';
-import { and, asc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, max, sql, type SQL } from 'drizzle-orm';
 
 import { db } from '../../db/index.js';
 import { categories, items, type CategoryRow } from '../../db/schema.js';
@@ -62,6 +62,14 @@ function toCategoryDTO(row: CategoryRow): CategoryDTO {
     deletedAt: row.deletedAt === null ? null : row.deletedAt.toISOString(),
   };
 }
+
+/** 当前用户全部未删除分类的筛选条件 */
+function activeCategoryFilter(userId: string): SQL | undefined {
+  return and(eq(categories.userId, userId), isNull(categories.deletedAt));
+}
+
+/** 分类的展示顺序：按 sortOrder 升序，sortOrder 相同时按创建时间兜底 */
+const CATEGORY_DISPLAY_ORDER = [asc(categories.sortOrder), asc(categories.createdAt)] as const;
 
 /** 判断查询结果是否恰好包含客户端提交的全部分类 ID */
 function hasSameCategoryIds(
@@ -141,8 +149,8 @@ app.openapi(listRoute, async (c) => {
   const rows = await db
     .select()
     .from(categories)
-    .where(and(eq(categories.userId, userId), isNull(categories.deletedAt)))
-    .orderBy(asc(categories.sortOrder), asc(categories.createdAt));
+    .where(activeCategoryFilter(userId))
+    .orderBy(...CATEGORY_DISPLAY_ORDER);
 
   return c.json({ categories: rows.map(toCategoryDTO) }, 200);
 });
@@ -183,7 +191,7 @@ app.openapi(createCategoryRoute, async (c) => {
   const [aggregate] = await db
     .select({ maxSortOrder: max(categories.sortOrder) })
     .from(categories)
-    .where(and(eq(categories.userId, userId), isNull(categories.deletedAt)));
+    .where(activeCategoryFilter(userId));
   // 已有记录取到上限时不再 +1，否则会超出 Postgres integer 范围导致 500。
   // 此时新记录与最大值并列，排序退化为按 createdAt 兜底，不影响可用性。
   const sortOrder = Math.min((aggregate?.maxSortOrder ?? -1) + 1, SORT_ORDER_MAX);
@@ -267,7 +275,7 @@ app.openapi(updateOrderRoute, async (c) => {
     const lockedRows = await tx
       .select({ id: categories.id })
       .from(categories)
-      .where(and(eq(categories.userId, userId), isNull(categories.deletedAt)))
+      .where(activeCategoryFilter(userId))
       .orderBy(asc(categories.id))
       .for('update');
 
@@ -281,8 +289,8 @@ app.openapi(updateOrderRoute, async (c) => {
     const currentRows = await tx
       .select()
       .from(categories)
-      .where(and(eq(categories.userId, userId), isNull(categories.deletedAt)))
-      .orderBy(asc(categories.sortOrder), asc(categories.createdAt));
+      .where(activeCategoryFilter(userId))
+      .orderBy(...CATEGORY_DISPLAY_ORDER);
 
     const isSameOrder = categoryIds.every((id, index) => currentRows[index]?.id === id);
     if (isSameOrder) {
@@ -328,8 +336,8 @@ app.openapi(updateOrderRoute, async (c) => {
     return tx
       .select()
       .from(categories)
-      .where(and(eq(categories.userId, userId), isNull(categories.deletedAt)))
-      .orderBy(asc(categories.sortOrder), asc(categories.createdAt));
+      .where(activeCategoryFilter(userId))
+      .orderBy(...CATEGORY_DISPLAY_ORDER);
   });
 
   return c.json({ categories: rows.map(toCategoryDTO) }, 200);
