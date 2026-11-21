@@ -5,6 +5,9 @@
  */
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import type { z } from '@hono/zod-openapi';
+
+import type { ErrorSchema } from './openapi.js';
 
 /** 业务错误码 */
 export const ErrorCode = {
@@ -61,11 +64,8 @@ export const logtoUpstreamError = (): AppError =>
 export const serviceNotConfigured = (): AppError =>
   new AppError(503, ErrorCode.ServiceNotConfigured, '注销服务尚未配置');
 
-interface IErrorBody {
-  code: string;
-  message: string;
-  details?: unknown;
-}
+/** 错误响应体，形状由 ErrorSchema 推导，保证实际错误响应与 openapi.json 契约一致 */
+type ErrorBody = z.infer<typeof ErrorSchema>;
 
 /**
  * 全局错误处理。
@@ -75,7 +75,7 @@ interface IErrorBody {
  */
 export function handleError(err: Error, c: Context): Response {
   if (err instanceof AppError) {
-    const body: IErrorBody = { code: err.code, message: err.message };
+    const body: ErrorBody = { code: err.code, message: err.message };
     if (err.details !== undefined) {
       body.details = err.details;
     }
@@ -83,11 +83,11 @@ export function handleError(err: Error, c: Context): Response {
   }
 
   if (err instanceof HTTPException) {
-    const body: IErrorBody = { code: ErrorCode.BadRequest, message: err.message };
+    const body: ErrorBody = { code: ErrorCode.BadRequest, message: err.message };
     return c.json(body, err.status);
   }
 
   console.error('未处理的异常：', err);
-  const body: IErrorBody = { code: ErrorCode.Internal, message: '服务内部错误' };
+  const body: ErrorBody = { code: ErrorCode.Internal, message: '服务内部错误' };
   return c.json(body, 500);
 }

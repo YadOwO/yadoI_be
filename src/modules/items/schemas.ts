@@ -148,6 +148,16 @@ export const ItemListSchema = z
   })
   .openapi('ItemList');
 
+/** 创建与更新共用、声明完全一致的可空可写字段：传 null 表示未设置或清空，不传在创建时表示未设置、在更新时表示不修改 */
+const ItemNullableWritableShape = {
+  note: ItemNoteSchema.nullable().optional(),
+  purchasePrice: ItemAmountSchema.nullable().optional(),
+  salePrice: ItemAmountSchema.nullable().optional(),
+  purchasedAt: CalendarDateSchema.nullable().optional(),
+  soldAt: CalendarDateSchema.nullable().optional(),
+  warrantyUntil: CalendarDateSchema.nullable().optional(),
+};
+
 /**
  * 创建请求。
  *
@@ -174,12 +184,7 @@ export const ItemCreateSchema = z
     icon: ItemIconSchema.nullable().optional().openapi({ description: '物品图标' }),
     status: ItemStatusSchema.optional().openapi({ description: '不传默认为 in_service' }),
     isFavorite: z.boolean().optional().openapi({ description: '不传默认为 false' }),
-    note: ItemNoteSchema.nullable().optional(),
-    purchasePrice: ItemAmountSchema.nullable().optional(),
-    salePrice: ItemAmountSchema.nullable().optional(),
-    purchasedAt: CalendarDateSchema.nullable().optional(),
-    soldAt: CalendarDateSchema.nullable().optional(),
-    warrantyUntil: CalendarDateSchema.nullable().optional(),
+    ...ItemNullableWritableShape,
   })
   .openapi('ItemCreate');
 
@@ -196,12 +201,7 @@ export const ItemUpdateSchema = z
     icon: ItemIconSchema.nullable().optional(),
     status: ItemStatusSchema.optional(),
     isFavorite: z.boolean().optional(),
-    note: ItemNoteSchema.nullable().optional(),
-    purchasePrice: ItemAmountSchema.nullable().optional(),
-    salePrice: ItemAmountSchema.nullable().optional(),
-    purchasedAt: CalendarDateSchema.nullable().optional(),
-    soldAt: CalendarDateSchema.nullable().optional(),
-    warrantyUntil: CalendarDateSchema.nullable().optional(),
+    ...ItemNullableWritableShape,
   })
   .refine((value) => Object.keys(value).length > 0, { message: '至少需要一个待更新字段' })
   .openapi('ItemUpdate', { minProperties: 1 });
