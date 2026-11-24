@@ -6,14 +6,7 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
-/**
- * 可选的非空字符串。dotenv 里写成 `KEY=` 会得到空字符串，这里把空字符串视为未配置，
- * 避免留空的可选配置让整个服务启动失败。
- */
-const optionalNonEmptyString = z.preprocess(
-  (value) => (value === '' ? undefined : value),
-  z.string().min(1).optional(),
-);
+import { parseMachineTokens } from '../middleware/machine.js';
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(7788),
@@ -33,15 +26,19 @@ const envSchema = z.object({
   AUTH_DEV_BYPASS: z.enum(['true', 'false']).default('false'),
   AUTH_DEV_USER_ID: z.string().min(1).default('dev-user-0001'),
 
-  /** Logto Machine-to-Machine 应用 ID，用于调用 Management API 删除用户；留空则注销接口对真实用户返回 503 */
-  LOGTO_M2M_APP_ID: optionalNonEmptyString,
-  /** Logto Machine-to-Machine 应用密钥，与 LOGTO_M2M_APP_ID 成对配置 */
-  LOGTO_M2M_APP_SECRET: optionalNonEmptyString,
-  /** Logto Management API 的 resource indicator，默认为 Logto 内置值 */
-  LOGTO_MANAGEMENT_RESOURCE: z.string().min(1).default('https://default.logto.app/api'),
-
   /** 允许的跨域来源，逗号分隔；生产环境应配置具体域名而非 * */
   CORS_ORIGINS: z.string().min(1).default('*'),
+
+  /**
+   * 允许调用内部接口（/internal/...）的机器：`调用方ID:凭证的 sha256`，逗号分隔；现在只有 yado_hub（`yado-hub:<sha256>`）。
+   * 凭证明文只在 yado_hub 的 ACCOUNT_DELETION_TOKENS 里。留空时内部接口一律 401，用户注销会在 yado_hub 那边失败、提示重试。
+   */
+  INTERNAL_MACHINE_TOKENS: z
+    .string()
+    .default('')
+    .refine((value) => parseMachineTokens(value) !== null, {
+      message: '格式应为 调用方ID:sha256（64 位小写十六进制），多项用逗号分隔',
+    }),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -62,21 +59,8 @@ export const env = {
   isProduction,
   /** JWKS 实际地址 */
   logtoJwksUrl: raw.LOGTO_JWKS_URL ?? `${raw.LOGTO_ISSUER.replace(/\/$/, '')}/jwks`,
-  /**
-   * Logto Management API 配置：两个 M2M 凭证都配置时才可用，否则为 null。
-   * tokenUrl 用于换取 M2M access token；apiBaseUrl 是 Management API 根地址，
-   * 位于 Logto 域名根下的 /api（issuer 去掉末尾的 /oidc）。
-   */
-  logtoManagement:
-    raw.LOGTO_M2M_APP_ID !== undefined && raw.LOGTO_M2M_APP_SECRET !== undefined
-      ? {
-          tokenUrl: `${raw.LOGTO_ISSUER.replace(/\/$/, '')}/token`,
-          apiBaseUrl: `${raw.LOGTO_ISSUER.replace(/\/$/, '').replace(/\/oidc$/, '')}/api`,
-          resource: raw.LOGTO_MANAGEMENT_RESOURCE,
-          appId: raw.LOGTO_M2M_APP_ID,
-          appSecret: raw.LOGTO_M2M_APP_SECRET,
-        }
-      : null,
+  /** 内部接口的凭证哈希 → 调用方 ID；格式已在 envSchema 里校验过，未配置时为空表 */
+  internalMachineTokens: parseMachineTokens(raw.INTERNAL_MACHINE_TOKENS) ?? new Map<string, string>(),
   /**
    * 是否启用开发态免鉴权。
    * 生产环境无论如何配置都为 false，防止误开导致接口裸奔。

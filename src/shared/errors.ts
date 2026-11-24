@@ -15,10 +15,6 @@ export const ErrorCode = {
   Unauthorized: 'UNAUTHORIZED',
   NotFound: 'NOT_FOUND',
   Conflict: 'CONFLICT',
-  /** Logto Management API 调用失败（注销账号时删除 Logto 用户） */
-  LogtoUpstreamError: 'LOGTO_UPSTREAM_ERROR',
-  /** 服务端缺少必要配置，功能暂不可用 */
-  ServiceNotConfigured: 'SERVICE_NOT_CONFIGURED',
   Internal: 'INTERNAL_ERROR',
 } as const;
 
@@ -55,14 +51,6 @@ export const notFound = (message = '资源不存在'): AppError =>
 
 export const conflict = (message: string, details?: unknown): AppError =>
   new AppError(409, ErrorCode.Conflict, message, details);
-
-/** Logto 账号服务不可用或返回异常，可重试 */
-export const logtoUpstreamError = (): AppError =>
-  new AppError(502, ErrorCode.LogtoUpstreamError, '账号服务暂时不可用，请稍后重试');
-
-/** 注销所需的 Logto Management API 凭证未配置 */
-export const serviceNotConfigured = (): AppError =>
-  new AppError(503, ErrorCode.ServiceNotConfigured, '注销服务尚未配置');
 
 /** 错误响应体，形状由 ErrorSchema 推导，保证实际错误响应与 openapi.json 契约一致 */
 type ErrorBody = z.infer<typeof ErrorSchema>;

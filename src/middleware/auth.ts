@@ -43,7 +43,7 @@ function extractBearerToken(header: string | undefined): string {
 
 /**
  * 解析请求的用户标识：开发态免鉴权返回固定用户，否则校验 Bearer JWT 并返回 sub。
- * 不查注销名单，由调用方决定是否检查。
+ * 不查注销名单，由 requireAuth 检查。
  */
 async function resolveUserId(c: Context<AppEnv>): Promise<string> {
   if (env.isDevAuthBypassEnabled) {
@@ -73,6 +73,7 @@ async function resolveUserId(c: Context<AppEnv>): Promise<string> {
  *
  * JWT 是离线验签的，Logto 删除用户后旧 token 仍能通过验签，
  * 所以验签后还要查注销名单，命中则拒绝（开发态免鉴权时也查）。
+ * 注销本身由 yado_hub 调内部接口完成（机器凭证鉴权），不经过这里。
  */
 export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   const userId = await resolveUserId(c);
@@ -85,13 +86,5 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
     throw unauthorized();
   }
   c.set('userId', userId);
-  await next();
-});
-
-/**
- * 只验签、不查注销名单的鉴权，仅供 DELETE /v1/account 使用，使已注销的用户可以重试。
- */
-export const requireAuthIncludingDeleted = createMiddleware<AppEnv>(async (c, next) => {
-  c.set('userId', await resolveUserId(c));
   await next();
 });

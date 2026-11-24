@@ -59,22 +59,24 @@ pnpm run dev
 
 ## 注销账号
 
-`DELETE /v1/account`（成功返回 204）会**永久删除芽豆账号（Logto 用户）**，再在一个事务里写入注销名单
-`yadoi.deleted_users`、物理删除该用户在芽豆有物的全部云端数据（物品、分类，含已删除的记录）。
-芽豆系列所有 App 共用同一个 Logto 账号，注销后在所有芽豆 App 里都无法再登录，操作不可撤销。
-注销之后，旧 token 调用其他接口一律返回 401；接口可重复调用（用于失败重试）。
-本接口不清除芽豆资产等其他产品的云端数据。
+App 不直接调本服务注销：芽豆系列所有 App 共用一个 Logto 账号，注销统一调 yado_hub 的 `DELETE /v1/account`，由 hub 依次调各服务的内部接口、
+全部成功后再删 Logto 用户（见 yado_hub README「注销账号」）。本服务不再持有 Logto Management API 凭证。
 
-- 需要配置 Logto Management API 的 M2M 凭证：`LOGTO_M2M_APP_ID`、`LOGTO_M2M_APP_SECRET`
-  （见 `.env.example`）。没配时真实用户调用返回 503；开发态免鉴权的假用户不调用 Logto，所以不受这项配置影响。
-- 开发态免鉴权下调用注销，同样会物理删除数据，并把固定的 `AUTH_DEV_USER_ID` 写进 `yadoi.deleted_users`，之后本地所有业务接口都返回 401。要恢复，可以执行 `DELETE FROM yadoi.deleted_users WHERE user_id = '<AUTH_DEV_USER_ID>';`，或者换一个 `AUTH_DEV_USER_ID`。
-- Logto 删除失败返回 502，此时什么都没动，可以重试。
-- App 要先停掉写请求，再调用注销接口。
+本服务的内部接口是 `DELETE /internal/v1/users/{userId}`（`src/modules/internal/`，成功返回 200 `{"deleted": true}`）：
+在一个事务里写入注销名单 `yadoi.deleted_users`、物理删除该用户在芽豆有物的全部云端数据（物品、分类，含已删除的记录）。
+之后旧 token 调用其他接口一律返回 401。
 
-App 接入要求：
+- 只给 yado_hub 调：机器凭证鉴权，`INTERNAL_MACHINE_TOKENS` 存 `yado-hub:<凭证的 sha256>`，凭证明文在 hub 的 `ACCOUNT_DELETION_TOKENS`；留空时一律 401。
+- 不经公网：服务器上 `yadoi-api` 的 nginx 配置要对 `/internal/` 返回 403（本仓库没有 nginx 配置，见 `deploy/pending.md`）；hub 走容器内网 `http://yadoi-be:7788`；不进 `openapi.json`。
+- 可重复调用，没有数据也返回 200；数据库出错返回 500，hub 据此中止注销、让 App 重试。
+- 开发态免鉴权下调过内部接口删 `AUTH_DEV_USER_ID` 后，它会在 `yadoi.deleted_users` 里，之后本地所有业务接口都返回 401。要恢复，可以执行 `DELETE FROM yadoi.deleted_users WHERE user_id = '<AUTH_DEV_USER_ID>';`，或者换一个 `AUTH_DEV_USER_ID`。
+- App 要先停掉写请求，再发起注销。
 
+App 接入要求（yadoI 接入注销时）：
+
+- 只调 yado_hub 的 `DELETE /v1/account`（用 hub resource 的 token），照芽豆资产的 `AccountDeletionAPI` 写；hub 要串行等几个服务，请求超时留 90 秒。
 - 确认弹窗必须用严重措辞，照芽豆资产的「注销芽豆账号？」文案写明：账号将被永久删除，
-  所有芽豆 App 都无法再登录；芽豆有物云端数据将被永久删除；此操作无法撤销。
+  所有芽豆 App 都无法再登录；所有芽豆 App 的云端数据将被永久删除；此操作无法撤销。
   按钮用红色的「继续注销」。
 - 调用失败时提示「注销没有完成，请检查网络后重试」，且不退出登录。
 
