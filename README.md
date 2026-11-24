@@ -80,6 +80,16 @@ App 接入要求（yadoI 接入注销时）：
   按钮用红色的「继续注销」。
 - 调用失败时提示「注销没有完成，请检查网络后重试」，且不退出登录。
 
+## 数据联动：物品购入价汇总
+
+用户在芽豆资产里授权后，yado_hub 用机器凭证调 `GET /internal/v1/users/{userId}/item-value-summary`（同在 `src/modules/internal/`），
+拿这个用户在用和退役物品的购入价汇总。鉴权、不经公网、不进 `openapi.json` 的约束同上，凭证是 `INTERNAL_MACHINE_TOKENS` 里的 `yado-hub`，没带或不对返回 401。
+
+- 口径与 yadoI 统计页「持有购入总值」一致：只算 `in_service` 和 `retired`、`deleted_at` 为空的物品，已卖出和已删除的不算；没填购入价的只计入 `unpricedItemCount`，0 元算有价。
+- 只给汇总、不给明细。200 响应：`{ inServicePurchaseTotal, retiredPurchaseTotal, pricedItemCount, unpricedItemCount, lastItemUpdatedAt }`，
+  两个合计是固定两位小数的字符串（例如 `"1234.50"`，在数据库里算完，避免浮点误差），`lastItemUpdatedAt` 是 ISO 8601（UTC）或 `null`；没有数据时是 `"0.00"`、`"0.00"`、`0`、`0`、`null`。
+- 只统计路径里的这个用户；日志只记 `userId`、调用方和耗时，不记金额。
+
 ## 部署
 
 镜像为多阶段构建，以非 root 用户运行，并限制 V8 堆上限以适配小内存机器。

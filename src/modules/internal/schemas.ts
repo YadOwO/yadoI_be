@@ -20,3 +20,36 @@ export const InternalUserDeletionSchema = z
   .openapi('InternalUserDeletion');
 
 export type InternalUserDeletionDTO = z.infer<typeof InternalUserDeletionSchema>;
+
+/**
+ * 物品购入价汇总的响应，给 yado_hub 的数据联动用：只有汇总数，没有任何物品明细。
+ * 金额用两位小数的字符串而不是 number，避免浮点误差，也让上游原样透传。
+ */
+export const InternalItemValueSummarySchema = z
+  .object({
+    inServicePurchaseTotal: z
+      .string()
+      .regex(/^\d+\.\d{2}$/)
+      .openapi({ description: '在用（in_service）物品的购入价合计，固定两位小数，例如 "1234.50"；没有数据时为 "0.00"' }),
+    retiredPurchaseTotal: z
+      .string()
+      .regex(/^\d+\.\d{2}$/)
+      .openapi({ description: '退役（retired）物品的购入价合计，固定两位小数；没有数据时为 "0.00"' }),
+    pricedItemCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .openapi({ description: '填了购入价的在用和退役物品件数，购入价为 0 元也算填了' }),
+    unpricedItemCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .openapi({ description: '没填购入价的在用和退役物品件数，这些物品不参与合计' }),
+    lastItemUpdatedAt: z
+      .string()
+      .nullable()
+      .openapi({ description: '参与汇总的物品里最近一次更新的时刻，ISO 8601（UTC）；没有物品时为 null' }),
+  })
+  .openapi('InternalItemValueSummary');
+
+export type InternalItemValueSummaryDTO = z.infer<typeof InternalItemValueSummarySchema>;
