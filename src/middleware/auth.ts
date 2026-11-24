@@ -12,6 +12,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { deletedUsers } from '../db/schema.js';
+import { readBearerToken } from '../shared/bearer.js';
 import { unauthorized } from '../shared/errors.js';
 import type { AppEnv } from '../types.js';
 
@@ -31,10 +32,10 @@ function getJwks(): RemoteJWKSet {
 
 /** 从 Authorization 头中提取 Bearer token */
 function extractBearerToken(header: string | undefined): string {
-  if (header === undefined || !header.toLowerCase().startsWith('bearer ')) {
+  const token = readBearerToken(header);
+  if (token === null) {
     throw unauthorized('缺少 Bearer token');
   }
-  const token = header.slice('bearer '.length).trim();
   if (token.length === 0) {
     throw unauthorized('Bearer token 为空');
   }

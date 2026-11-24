@@ -10,6 +10,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { MiddlewareHandler } from 'hono';
 import { createMiddleware } from 'hono/factory';
 
+import { readBearerToken } from '../shared/bearer.js';
 import { unauthorized } from '../shared/errors.js';
 import type { AppEnv } from '../types.js';
 
@@ -60,11 +61,10 @@ function findCaller(tokens: ReadonlyMap<string, string>, token: string): string 
  */
 export function createRequireMachine(tokens: ReadonlyMap<string, string>): MiddlewareHandler<AppEnv> {
   return createMiddleware<AppEnv>(async (c, next) => {
-    const header = c.req.header('Authorization');
-    if (header === undefined || !header.toLowerCase().startsWith('bearer ')) {
+    const token = readBearerToken(c.req.header('Authorization'));
+    if (token === null) {
       throw unauthorized('缺少机器凭证');
     }
-    const token = header.slice('bearer '.length).trim();
     const callerId = token.length === 0 ? null : findCaller(tokens, token);
     if (callerId === null) {
       throw unauthorized('机器凭证不对');
