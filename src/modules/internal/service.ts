@@ -1,10 +1,29 @@
 /**
- * 内部接口的业务逻辑：用户注销时删除本服务里这个用户的数据；路由层只负责鉴权与响应。
+ * 内部接口的业务逻辑：用户注销时删除本服务里这个用户的数据，以及注销前汇总这个用户有多少数据；
+ * 路由层只负责鉴权与响应。
  */
-import { eq } from 'drizzle-orm';
+import { and, count, eq, isNull } from 'drizzle-orm';
 
 import { db } from '../../db/index.js';
 import { categories, deletedUsers, items } from '../../db/schema.js';
+
+/**
+ * 统计用户还没删除的物品件数，供 yado_hub 在注销确认页显示「N 件物品」。
+ *
+ * 完全只读：只数 items 里 user_id 匹配且 deleted_at 为空的行（软删除的不算），
+ * 不统计 categories，没有任何写操作和副作用。用户不存在或没有物品时返回 0。
+ *
+ * @param userId 要汇总的 Logto 用户 ID，由 yado_hub 在路径里传入
+ * @returns 未删除的物品件数，非负整数
+ */
+export async function countUserItems(userId: string): Promise<number> {
+  const rows = await db
+    .select({ total: count() })
+    .from(items)
+    .where(and(eq(items.userId, userId), isNull(items.deletedAt)));
+  // count(*) 在 Postgres 里是 bigint，drizzle 的 count() 已转成 number；聚合查询一定返回一行，这里仍显式判空
+  return rows[0]?.total ?? 0;
+}
 
 /**
  * 删除用户数据：在一个事务里写入注销名单，再物理删除这个用户在 yadoi schema 里的全部业务数据。

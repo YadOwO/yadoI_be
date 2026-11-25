@@ -69,6 +69,8 @@ App 不直接调本服务注销：芽豆系列所有 App 共用一个 Logto 账�
 - 只给 yado_hub 调：机器凭证鉴权，`INTERNAL_MACHINE_TOKENS` 存 `yado-hub:<凭证的 sha256>`，凭证明文在 hub 的 `ACCOUNT_DELETION_TOKENS`；留空时一律 401。
 - 不经公网：服务器上 `yadoi-api` 的 nginx 配置要对 `/internal/` 返回 403（本仓库没有 nginx 配置，见 `deploy/pending.md`）；hub 走容器内网 `http://yadoi-be:7788`；不进 `openapi.json`。
 - 可重复调用，没有数据也返回 200；数据库出错返回 500，hub 据此中止注销、让 App 重试。
+- 同一前缀下还有只读的 `GET /internal/v1/users/{userId}/summary`：注销确认页用，返回 `{"items":[{"key":"items","count":N}]}`，
+  N 是 `items` 里这个用户没删除的件数（软删除的不算，不统计分类，没有任何写操作）；数据库出错返回 500，hub 据此把这一项标为「暂时查不到」。
 - 开发态免鉴权下调过内部接口删 `AUTH_DEV_USER_ID` 后，它会在 `yadoi.deleted_users` 里，之后本地所有业务接口都返回 401。要恢复，可以执行 `DELETE FROM yadoi.deleted_users WHERE user_id = '<AUTH_DEV_USER_ID>';`，或者换一个 `AUTH_DEV_USER_ID`。
 - App 要先停掉写请求，再发起注销。
 

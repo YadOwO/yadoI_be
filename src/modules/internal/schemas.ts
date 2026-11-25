@@ -3,7 +3,7 @@
  */
 import { z } from '@hono/zod-openapi';
 
-/** 内部删除接口的路径参数：要删除的用户 */
+/** 内部接口的路径参数：要删除或汇总数据的用户 */
 export const InternalUserParamsSchema = z.object({
   userId: z
     .string()
@@ -20,3 +20,22 @@ export const InternalUserDeletionSchema = z
   .openapi('InternalUserDeletion');
 
 export type InternalUserDeletionDTO = z.infer<typeof InternalUserDeletionSchema>;
+
+/**
+ * 注销前数据汇总的响应：用户在本服务里会被删掉的数据量，yado_hub 汇总后显示在注销确认页。
+ * 数量为 0 也照样返回一项，由 hub 决定要不要展示。
+ */
+export const InternalUserSummarySchema = z
+  .object({
+    items: z
+      .array(
+        z.object({
+          key: z.string().openapi({ description: '数据项标识，固定为 items（未删除的物品件数）' }),
+          count: z.number().int().nonnegative().openapi({ description: '数量，非负整数' }),
+        }),
+      )
+      .openapi({ description: '本服务的数据项及数量' }),
+  })
+  .openapi('InternalUserSummary');
+
+export type InternalUserSummaryDTO = z.infer<typeof InternalUserSummarySchema>;

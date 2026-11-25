@@ -1,5 +1,6 @@
 /**
- * 注销账号内部接口的集成测试：yado_hub 用机器凭证调 DELETE /internal/v1/users/{userId}。
+ * 注销账号内部接口的集成测试：yado_hub 用机器凭证调 DELETE /internal/v1/users/{userId}，
+ * 以及注销前调只读的 GET /internal/v1/users/{userId}/summary 汇总数据量。
  *
  * 用开发态免鉴权造数据、验证旧身份被拒（不调用 Logto），直接连接 DATABASE_URL 指向的库（需已迁移），结束后清理。
  */
@@ -13,6 +14,12 @@ import { eq } from 'drizzle-orm';
 const USER_ID = `test-account-${randomUUID()}`;
 /** 另一个用户，用来验证注销不会误伤别人的数据 */
 const OTHER_USER_ID = `test-account-other-${randomUUID()}`;
+/** 汇总接口测试用的用户：和注销测试分开，避免互相影响数据量 */
+const SUMMARY_USER_ID = `test-account-summary-${randomUUID()}`;
+/** 汇总接口测试里的另一个用户，用来验证别人的物品不会被算进来 */
+const SUMMARY_OTHER_USER_ID = `test-account-summary-other-${randomUUID()}`;
+/** 一个库里没有任何数据的用户 */
+const EMPTY_USER_ID = `test-account-empty-${randomUUID()}`;
 /** yado_hub 持有的凭证明文；本服务只存它的 sha256 */
 const HUB_TOKEN = `hub-${randomUUID()}`;
 
@@ -30,6 +37,9 @@ after(async () => {
   await db.delete(categories).where(eq(categories.userId, OTHER_USER_ID));
   await db.delete(items).where(eq(items.userId, USER_ID));
   await db.delete(categories).where(eq(categories.userId, USER_ID));
+  await db.delete(items).where(eq(items.userId, SUMMARY_USER_ID));
+  await db.delete(categories).where(eq(categories.userId, SUMMARY_USER_ID));
+  await db.delete(items).where(eq(items.userId, SUMMARY_OTHER_USER_ID));
   await closeDb();
 });
 
@@ -37,6 +47,14 @@ after(async () => {
 function deleteUser(userId: string, authorization: string | null = `Bearer ${HUB_TOKEN}`): Promise<Response> {
   const headers: Record<string, string> = authorization === null ? {} : { Authorization: authorization };
   return Promise.resolve(app.request(`/internal/v1/users/${encodeURIComponent(userId)}`, { method: 'DELETE', headers }));
+}
+
+/** 调内部汇总接口 */
+function getSummary(userId: string, authorization: string | null = `Bearer ${HUB_TOKEN}`): Promise<Response> {
+  const headers: Record<string, string> = authorization === null ? {} : { Authorization: authorization };
+  return Promise.resolve(
+    app.request(`/internal/v1/users/${encodeURIComponent(userId)}/summary`, { method: 'GET', headers }),
+  );
 }
 
 describe('DELETE /internal/v1/users/{userId}', () => {
@@ -124,6 +142,61 @@ describe('DELETE /internal/v1/users/{userId}', () => {
     assert.ok(typeof paths === 'object' && paths !== null);
     assert.deepEqual(
       Object.keys(paths).filter((path) => path.startsWith('/internal') || path === '/v1/account'),
+      [],
+    );
+  });
+});
+
+describe('GET /internal/v1/users/{userId}/summary', () => {
+  test('只数本人没删除的物品：软删除的、分类、别人的物品都不算，且不改任何数据', async () => {
+    const [activeCategory] = await db
+      .insert(categories)
+      .values({ userId: SUMMARY_USER_ID, name: `在用分类-${randomUUID()}` })
+      .returning();
+    assert.ok(activeCategory !== undefined);
+    await db
+      .insert(categories)
+      .values({ userId: SUMMARY_USER_ID, name: `已删分类-${randomUUID()}`, deletedAt: new Date() });
+    await db.insert(items).values([
+      { userId: SUMMARY_USER_ID, name: '在用物品一', categoryId: activeCategory.id },
+      { userId: SUMMARY_USER_ID, name: '在用物品二' },
+      { userId: SUMMARY_USER_ID, name: '在用物品三' },
+      { userId: SUMMARY_USER_ID, name: '已删物品', deletedAt: new Date() },
+    ]);
+    await db.insert(items).values({ userId: SUMMARY_OTHER_USER_ID, name: '别人的物品' });
+
+    const response = await getSummary(SUMMARY_USER_ID);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { items: [{ key: 'items', count: 3 }] });
+
+    // 只读：重复调用结果不变，物品（含软删除的）和分类原样保留，也不会进注销名单
+    const retryResponse = await getSummary(SUMMARY_USER_ID);
+    assert.equal(retryResponse.status, 200);
+    assert.deepEqual(await retryResponse.json(), { items: [{ key: 'items', count: 3 }] });
+    assert.equal((await db.select().from(items).where(eq(items.userId, SUMMARY_USER_ID))).length, 4);
+    assert.equal((await db.select().from(categories).where(eq(categories.userId, SUMMARY_USER_ID))).length, 2);
+    assert.equal((await db.select().from(items).where(eq(items.userId, SUMMARY_OTHER_USER_ID))).length, 1);
+    assert.equal((await db.select().from(deletedUsers).where(eq(deletedUsers.userId, SUMMARY_USER_ID))).length, 0);
+  });
+
+  test('不存在的用户也返回 200，count 为 0', async () => {
+    const response = await getSummary(EMPTY_USER_ID);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { items: [{ key: 'items', count: 0 }] });
+  });
+
+  test('没带凭证或凭证不对返回 401', async () => {
+    assert.equal((await getSummary(SUMMARY_USER_ID, null)).status, 401);
+    assert.equal((await getSummary(SUMMARY_USER_ID, 'Bearer not-the-hub-token')).status, 401);
+  });
+
+  test('汇总接口不进 openapi.json', async () => {
+    const doc: unknown = await (await app.request('/openapi.json')).json();
+    assert.ok(typeof doc === 'object' && doc !== null && 'paths' in doc);
+    const paths = doc.paths;
+    assert.ok(typeof paths === 'object' && paths !== null);
+    assert.deepEqual(
+      Object.keys(paths).filter((path) => path.startsWith('/internal') || path.endsWith('/summary')),
       [],
     );
   });
