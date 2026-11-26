@@ -1,11 +1,12 @@
 /**
- * 内部接口的业务逻辑：用户注销时删除本服务里这个用户的数据，以及注销前汇总这个用户有多少数据；
- * 路由层只负责鉴权与响应。
+ * 内部接口的业务逻辑：用户注销时删除本服务里这个用户的数据、注销前汇总这个用户有多少数据，
+ * 以及给 yado_hub 的数据联动提供物品购入价汇总；路由层只负责鉴权与响应。
  */
-import { and, count, eq, isNull } from 'drizzle-orm';
+import { and, count, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 
 import { db } from '../../db/index.js';
 import { categories, deletedUsers, items } from '../../db/schema.js';
+import type { InternalItemValueSummaryDTO } from './schemas.js';
 
 /**
  * 统计用户还没删除的物品件数，供 yado_hub 在注销确认页显示「N 件物品」。
@@ -48,4 +49,47 @@ export async function deleteUserData(userId: string): Promise<void> {
     await tx.delete(items).where(eq(items.userId, userId));
     await tx.delete(categories).where(eq(categories.userId, userId));
   });
+}
+
+/**
+ * 统计一个用户在用和退役物品的购入价汇总，给 yado_hub 的数据联动用。
+ *
+ * - 口径与 yadoI 统计页「持有购入总值」（HeldPurchaseTotalSummary）一致：只算 in_service 和 retired、
+ *   deleted_at 为空的物品；sold 和软删除的不算；购入价为空的物品不参与合计、只计入 unpricedItemCount；0 元也算有价
+ * - 只给汇总、不给明细：不返回任何一条物品的名称、分类、备注或单价，yado_hub 与芽豆资产拿到的只有合计和件数
+ * - 合计在数据库里算完再转成两位小数的文本，不把 purchase_price 读成 JS number 相加，避免浮点误差；没有数据时是 "0.00"
+ * - 只统计传入的 userId；调用方（yado_hub）在路径里指定用户，所以路由只认机器凭证
+ *
+ * @param userId 要统计的 Logto 用户 ID，由 yado_hub 在路径里传入
+ */
+export async function getItemValueSummary(userId: string): Promise<InternalItemValueSummaryDTO> {
+  const [row] = await db
+    .select({
+      inServicePurchaseTotal: sql<string>`cast(coalesce(sum(${items.purchasePrice}) filter (where ${items.status} = 'in_service'), 0) as numeric(20,2))::text`,
+      retiredPurchaseTotal: sql<string>`cast(coalesce(sum(${items.purchasePrice}) filter (where ${items.status} = 'retired'), 0) as numeric(20,2))::text`,
+      pricedItemCount: sql<number>`count(*) filter (where ${items.purchasePrice} is not null)`.mapWith(Number),
+      unpricedItemCount: sql<number>`count(*) filter (where ${items.purchasePrice} is null)`.mapWith(Number),
+      lastItemUpdatedAt: max(items.updatedAt),
+    })
+    .from(items)
+    .where(and(eq(items.userId, userId), isNull(items.deletedAt), inArray(items.status, ['in_service', 'retired'])));
+
+  // 不带 group by 的聚合查询一定返回一行；noUncheckedIndexedAccess 下仍要判空，空时按没有数据处理
+  if (row === undefined) {
+    return {
+      inServicePurchaseTotal: '0.00',
+      retiredPurchaseTotal: '0.00',
+      pricedItemCount: 0,
+      unpricedItemCount: 0,
+      lastItemUpdatedAt: null,
+    };
+  }
+
+  return {
+    inServicePurchaseTotal: row.inServicePurchaseTotal,
+    retiredPurchaseTotal: row.retiredPurchaseTotal,
+    pricedItemCount: row.pricedItemCount,
+    unpricedItemCount: row.unpricedItemCount,
+    lastItemUpdatedAt: row.lastItemUpdatedAt === null ? null : row.lastItemUpdatedAt.toISOString(),
+  };
 }

@@ -6,6 +6,7 @@
  * 这里用机器凭证鉴权（INTERNAL_MACHINE_TOKENS），不是 Logto 登录；
  * 不经公网（服务器 nginx 拒绝 /internal/），不进给 App 的 openapi.json（hide）。
  * 这是整个服务里唯一做物理删除的地方；删除对象由 yado_hub 在路径里指定，所以只认机器凭证，绝不能挂到给 App 的路由下。
+ * 这里还给 hub 提供数据联动用的汇总接口（GET /internal/v1/users/{userId}/item-value-summary）：只读，只返回购入价汇总数。
  */
 import { createRoute } from '@hono/zod-openapi';
 
@@ -13,13 +14,15 @@ import { env } from '../../config/env.js';
 import { createRequireMachine } from '../../middleware/machine.js';
 import { createApp, jsonError } from '../../shared/openapi.js';
 import {
+  InternalItemValueSummarySchema,
   InternalUserDeletionSchema,
   InternalUserParamsSchema,
   InternalUserSummarySchema,
+  type InternalItemValueSummaryDTO,
   type InternalUserDeletionDTO,
   type InternalUserSummaryDTO,
 } from './schemas.js';
-import { countUserItems, deleteUserData } from './service.js';
+import { countUserItems, deleteUserData, getItemValueSummary } from './service.js';
 
 const app = createApp();
 
@@ -92,6 +95,44 @@ app.openapi(summaryRoute, async (c) => {
     JSON.stringify({ event: 'internal_user_summary', userId, caller: c.get('machineId'), ms: Date.now() - startedAt }),
   );
   const body: InternalUserSummaryDTO = { items: [{ key: 'items', count }] };
+  return c.json(body, 200);
+});
+
+/** 物品购入价汇总的契约（不进 openapi.json） */
+const itemValueSummaryRoute = createRoute({
+  method: 'get',
+  path: '/{userId}/item-value-summary',
+  hide: true,
+  tags: ['internal'],
+  summary: '用户在用和退役物品的购入价汇总（数据联动）',
+  description:
+    '按「持有购入总值」的口径统计这个用户的在用和退役物品：已卖出和已删除的不算，没填购入价的只计件数。' +
+    '只返回汇总数，不返回任何物品明细。只给 yado_hub 用，机器凭证鉴权。',
+  middleware: [requireMachine] as const,
+  request: { params: InternalUserParamsSchema },
+  responses: {
+    200: {
+      description: '汇总；这个用户没有数据时合计为 "0.00"、件数为 0、lastItemUpdatedAt 为 null',
+      content: { 'application/json': { schema: InternalItemValueSummarySchema } },
+    },
+    400: jsonError('参数校验失败'),
+    401: jsonError('机器凭证不对'),
+  },
+});
+
+app.openapi(itemValueSummaryRoute, async (c) => {
+  const { userId } = c.req.valid('param');
+  const startedAt = Date.now();
+  // 数据库出错不在这里 catch，交给全局 handleError 返回 500；日志里不记金额
+  const body: InternalItemValueSummaryDTO = await getItemValueSummary(userId);
+  console.log(
+    JSON.stringify({
+      event: 'internal_item_value_summary',
+      userId,
+      caller: c.get('machineId'),
+      ms: Date.now() - startedAt,
+    }),
+  );
   return c.json(body, 200);
 });
 
