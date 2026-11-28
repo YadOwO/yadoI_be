@@ -29,6 +29,18 @@ const app = createApp();
 /** 只放行 yado_hub 的机器凭证 */
 const requireMachine = createRequireMachine(env.internalMachineTokens);
 
+/**
+ * 内部接口的审计日志：只记事件、用户、调用方与耗时，不记件数、金额等业务数据。
+ *
+ * @param event 日志事件名
+ * @param userId 路径里的用户 ID
+ * @param caller 机器鉴权写入的调用方 ID
+ * @param startedAt 请求开始处理的时刻（Date.now()）
+ */
+function logInternalRequest(event: string, userId: string, caller: string, startedAt: number): void {
+  console.log(JSON.stringify({ event, userId, caller, ms: Date.now() - startedAt }));
+}
+
 /** 删除用户数据的契约（不进 openapi.json） */
 const deleteUserRoute = createRoute({
   method: 'delete',
@@ -78,9 +90,7 @@ app.openapi(deleteUserRoute, async (c) => {
   const startedAt = Date.now();
   // 数据库出错不在这里 catch，交给全局 handleError 返回 500，yado_hub 据此中止注销
   await deleteUserData(userId);
-  console.log(
-    JSON.stringify({ event: 'internal_user_deleted', userId, caller: c.get('machineId'), ms: Date.now() - startedAt }),
-  );
+  logInternalRequest('internal_user_deleted', userId, c.get('machineId'), startedAt);
   const body: InternalUserDeletionDTO = { deleted: true };
   return c.json(body, 200);
 });
@@ -91,9 +101,7 @@ app.openapi(summaryRoute, async (c) => {
   // 数据库出错不在这里 catch，交给全局 handleError 返回 500，yado_hub 据此把这一项标为「暂时查不到」
   const count = await countUserItems(userId);
   // 日志只记用户、调用方与耗时，不记件数
-  console.log(
-    JSON.stringify({ event: 'internal_user_summary', userId, caller: c.get('machineId'), ms: Date.now() - startedAt }),
-  );
+  logInternalRequest('internal_user_summary', userId, c.get('machineId'), startedAt);
   const body: InternalUserSummaryDTO = { items: [{ key: 'items', count }] };
   return c.json(body, 200);
 });
@@ -125,14 +133,7 @@ app.openapi(itemValueSummaryRoute, async (c) => {
   const startedAt = Date.now();
   // 数据库出错不在这里 catch，交给全局 handleError 返回 500；日志里不记金额
   const body: InternalItemValueSummaryDTO = await getItemValueSummary(userId);
-  console.log(
-    JSON.stringify({
-      event: 'internal_item_value_summary',
-      userId,
-      caller: c.get('machineId'),
-      ms: Date.now() - startedAt,
-    }),
-  );
+  logInternalRequest('internal_item_value_summary', userId, c.get('machineId'), startedAt);
   return c.json(body, 200);
 });
 

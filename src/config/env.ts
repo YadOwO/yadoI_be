@@ -4,7 +4,7 @@
  * 校验失败时直接退出进程，避免服务带着错误配置运行。
  */
 import 'dotenv/config';
-import { z } from 'zod';
+import { z } from '@hono/zod-openapi';
 
 import { parseMachineTokens } from '../middleware/machine.js';
 
